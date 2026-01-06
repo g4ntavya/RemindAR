@@ -1,0 +1,270 @@
+/**
+ * RemindAR - Global Styles
+ * 
+ * Design Philosophy:
+ * - Fully transparent background for AR simulation
+ * - Calm, accessibility-first text styling
+ * - Soft glow effects for readability
+ * - Minimal motion to avoid overwhelming users
+ */
+
+/* Reset and Base */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0a0a0f;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Main App Container */
+.app-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Video Layer - Background */
+.video-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+.video-feed {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* Mirror for natural interaction */
+}
+
+/* Canvas for face detection visualization (optional debug) */
+.detection-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* AR Overlay Layer - Three.js Canvas */
+.ar-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* Status Indicator */
+.status-indicator {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.status-dot.connected {
+  background: #22c55e;
+  box-shadow: 0 0 10px #22c55e;
+}
+
+.status-dot.disconnected {
+  background: #ef4444;
+  box-shadow: 0 0 10px #ef4444;
+}
+
+.status-dot.connecting {
+  background: #f59e0b;
+  box-shadow: 0 0 10px #f59e0b;
+}
+
+.status-text {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Loading State */
+.loading-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2f 100%);
+  z-index: 1000;
+}
+
+.loading-spinner {
+  width: 60px;
+  height: 60px;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top-color: rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.loading-text {
+  margin-top: 24px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 16px;
+  font-weight: 400;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Error State */
+.error-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0a0a0f 0%, #1a0a0f 100%);
+  z-index: 1000;
+  padding: 40px;
+  text-align: center;
+}
+
+.error-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.error-icon::before {
+  content: "!";
+  font-size: 40px;
+  font-weight: bold;
+  color: #ef4444;
+}
+
+.error-title {
+  color: #ffffff;
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.error-message {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 16px;
+  max-width: 400px;
+  line-height: 1.6;
+}
+
+/* AR Text Label Styling (used in Three.js HTML) */
+.ar-label {
+  font-family: 'Inter', sans-serif;
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 
+    0 0 10px rgba(255, 255, 255, 0.3),
+    0 0 20px rgba(255, 255, 255, 0.2),
+    0 2px 8px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.ar-label-name {
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  letter-spacing: -0.5px;
+}
+
+.ar-label-relation {
+  font-size: 18px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.75);
+  margin-bottom: 4px;
+}
+
+.ar-label-context {
+  font-size: 16px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.6);
+  font-style: italic;
+}
+
+/* Face bounding box debug overlay */
+.face-bbox {
+  position: absolute;
+  border: 2px solid rgba(100, 200, 255, 0.5);
+  border-radius: 8px;
+  pointer-events: none;
+  transition: all 0.1s ease-out;
+}
+
+/* Accessibility: Reduce motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .status-dot,
+  .loading-spinner {
+    animation: none;
+  }
+  
+  .ar-label {
+    transition: none;
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .ar-label {
+    color: #ffffff;
+    text-shadow: 
+      0 0 2px #000000,
+      0 0 4px #000000,
+      0 0 6px #000000;
+  }
+}
