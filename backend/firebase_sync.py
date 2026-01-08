@@ -86,7 +86,7 @@ def sync_person_to_firebase(person_data: Dict[str, Any], embedding: Optional[np.
             "last_met": person_data.get("last_met", ""),
             "context": person_data.get("context", ""),
             "has_embedding": embedding is not None,
-            "updated_at": firestore.SERVER_TIMESTAMP,
+            "updated_at": firestore.SERVER_TIMESTAMP,  # Sentinel for Firestore
         }
         
         # Store embedding as list of floats
@@ -97,8 +97,17 @@ def sync_person_to_firebase(person_data: Dict[str, Any], embedding: Optional[np.
         _db.collection("people").document(person_id).set(doc_data, merge=True)
         print(f"[Firebase] Synced person: {person_id}")
         
-        # Notify listeners
-        notify_update("person_added", {"id": person_id, **doc_data})
+        # Notify listeners - use serializable data only (no Sentinel!)
+        from datetime import datetime
+        notify_data = {
+            "id": person_id,
+            "name": person_data.get("name", ""),
+            "relation": person_data.get("relation", ""),
+            "last_met": person_data.get("last_met", ""),
+            "context": person_data.get("context", ""),
+            "updated_at": datetime.now().isoformat(),
+        }
+        notify_update("person_updated", notify_data)
         
     except Exception as e:
         print(f"[Firebase] Sync error: {e}")

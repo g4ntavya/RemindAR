@@ -451,8 +451,18 @@ async def update_person(person_id: str, person: PersonCreate):
     
     updated_person = get_person(person_id)
     
+    # Update recognizer cache with new person data
+    recognizer = get_recognizer()
+    recognizer.update_person_data(person_id, updated_person)
+    
     # Sync to Firebase
     sync_person_to_firebase(updated_person)
+    
+    # Broadcast to all clients so UI updates immediately
+    await broadcast_to_all({
+        "type": "person_updated",
+        "data": updated_person
+    })
     
     print(f"[API] Updated person: {person.name} ({person_id})")
     return updated_person

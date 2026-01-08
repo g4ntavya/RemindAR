@@ -119,6 +119,13 @@ class FaceRecognizer:
         if person_id in self._cache:
             del self._cache[person_id]
     
+    def update_person_data(self, person_id: str, new_data: dict):
+        """Update person info in cache (keeps existing embedding)."""
+        if person_id in self._cache:
+            _, embedding = self._cache[person_id]
+            self._cache[person_id] = (new_data, embedding)
+            print(f"[FaceRec] Updated cache: {new_data.get('name')}")
+    
     def get_cache_count(self) -> int:
         return len(self._cache)
     
