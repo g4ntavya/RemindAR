@@ -11,8 +11,8 @@ RemindAR uses your webcam to detect faces, recognize identities, and display con
 **How it works:**
 - Face detection runs in the browser using MediaPipe
 - Face recognition uses InsightFace embeddings on the backend
+- Voice input with Whisper + Phi-3 for natural registration
 - Data syncs between local SQLite and Firebase Firestore
-- AR labels appear beside recognized faces with name, relation, and context
 
 ---
 
@@ -22,9 +22,18 @@ RemindAR uses your webcam to detect faces, recognize identities, and display con
 
 - Python 3.9+
 - Node.js 18+
+- Ollama (for local LLM)
 - A webcam
 
-### Backend Setup
+### 1. Install Ollama
+
+Download from https://ollama.com/download and pull the Phi-3 model:
+
+```bash
+ollama pull phi3
+```
+
+### 2. Backend Setup
 
 ```bash
 cd backend
@@ -40,9 +49,9 @@ pip install -r requirements.txt
 python main.py
 ```
 
-On first run, the InsightFace model (~300MB) downloads automatically.
+On first run, InsightFace (~300MB) and Whisper (~150MB) models download automatically.
 
-### Frontend Setup
+### 3. Frontend Setup
 
 ```bash
 cd frontend
@@ -58,32 +67,26 @@ Open `http://localhost:5173` and allow camera access.
 ## Features
 
 **Face Detection**  
-MediaPipe runs entirely in-browser for fast, low-latency detection.
+MediaPipe runs in-browser for fast detection.
 
 **Face Recognition**  
-InsightFace generates 512-dimensional embeddings. Faces are matched using cosine similarity against a local cache.
+InsightFace embeddings matched using cosine similarity.
+
+**Voice Registration**  
+Speak naturally: "That's Aditya, my friend, we met for coffee"  
+Whisper transcribes, Phi-3 extracts structured data, form auto-fills.
 
 **Hybrid Storage**  
-Firebase Firestore for cloud sync, SQLite for fast local reads. On startup, Firestore data syncs to SQLite, then loads into an in-memory cache.
-
-**Voice Input**  
-Local Whisper transcription for adding context via voice. No cloud API needed.
-
-**Real-time Updates**  
-WebSocket connection streams recognition results instantly. No polling.
+Firestore for cloud sync, SQLite for local reads, in-memory cache for speed.
 
 ---
 
 ## Registering Faces
 
-When the system detects an unknown face, an "Add this person" button appears. Click it to open the registration form.
-
-Fields:
-- Name (required)
-- Relation (e.g., Doctor, Friend, Daughter)
-- Context (notes about the person, supports voice input)
-
-After registration, the face is immediately recognized.
+1. Click "Add this person" on an unknown face
+2. Click "Speak" and say something like: "That's Sarah, my doctor, she prescribed medication"
+3. Form auto-fills with extracted info
+4. Click Save
 
 ---
 
@@ -92,15 +95,14 @@ After registration, the face is immediately recognized.
 ```
 Frontend (React + TypeScript)
 ├── MediaPipe face detection
-├── Face tracking with smoothing
-├── WebSocket client for recognition
-└── AR overlay with CSS positioning
+├── WebSocket for recognition
+└── AR overlay with CSS
 
 Backend (FastAPI + Python)
-├── WebSocket server
 ├── InsightFace recognition
-├── SQLite + Firebase storage
-└── Whisper transcription
+├── Whisper transcription
+├── Phi-3 extraction (via Ollama)
+└── SQLite + Firebase storage
 ```
 
 ---
@@ -111,24 +113,17 @@ Backend (FastAPI + Python)
 RemindAR/
 ├── backend/
 │   ├── main.py              # FastAPI server
-│   ├── face_recognition.py  # InsightFace integration
-│   ├── database.py          # SQLite operations
-│   ├── firebase_sync.py     # Firestore sync
-│   ├── speech_to_text.py    # Whisper STT
-│   └── models.py            # Data schemas
+│   ├── face_recognition.py  # InsightFace
+│   ├── speech_to_text.py    # Whisper
+│   ├── llm_extraction.py    # Phi-3 via Ollama
+│   ├── database.py          # SQLite
+│   └── firebase_sync.py     # Firestore
 │
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx
 │   │   ├── components/
-│   │   │   ├── Camera.tsx
-│   │   │   ├── AROverlay.tsx
-│   │   │   └── RegistrationModal.tsx
-│   │   ├── hooks/
-│   │   │   ├── useWebSocket.ts
-│   │   │   ├── useFaceDetection.ts
-│   │   │   └── useSpeechToText.ts
-│   │   └── styles/
+│   │   └── hooks/
 │   └── package.json
 │
 └── README.md
@@ -138,37 +133,29 @@ RemindAR/
 
 ## Configuration
 
-**Backend**
+**Backend**: Runs on port 8000
 
-The server runs on port 8000 by default.
-
-**Frontend**
-
-Create `.env` in the frontend directory:
-
+**Frontend**: Create `.env`:
 ```env
 VITE_WS_URL=ws://localhost:8000/ws
 ```
 
-**Firebase**
+**Firebase**: Place `firebase-credentials.json` in backend directory. Falls back to SQLite-only if not present.
 
-Place your `firebase-credentials.json` in the backend directory. If not present, the system falls back to SQLite-only storage.
+**Ollama**: Must be running for voice extraction to work.
 
 ---
 
 ## Troubleshooting
 
-**Camera not working**  
-Check browser permissions. Try Chrome if using Safari.
+**Voice extraction returns null**  
+Make sure Ollama is running: `ollama serve`
 
-**WebSocket disconnecting**  
-Ensure the backend is running. Check the browser console for errors.
+**Camera not working**  
+Check browser permissions. Try Chrome.
 
 **Faces not recognized**  
-Make sure faces are registered first. Good lighting helps.
-
-**Recognition only updates after switching tabs**  
-Refresh the browser to pick up the latest code changes.
+Register faces first. Good lighting helps.
 
 ---
 
@@ -177,11 +164,10 @@ Refresh the browser to pick up the latest code changes.
 - FastAPI
 - MediaPipe
 - InsightFace
+- Whisper (faster-whisper)
+- Phi-3 (via Ollama)
 - Firebase Firestore
-- Faster-Whisper
-- React
-- TypeScript
-- Vite
+- React / TypeScript / Vite
 
 ---
 

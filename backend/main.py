@@ -360,6 +360,30 @@ async def api_transcribe(audio: UploadFile = File(...)):
     }
 
 
+from pydantic import BaseModel
+
+class ExtractionRequest(BaseModel):
+    text: str
+
+@app.post("/api/extract")
+async def api_extract(request: ExtractionRequest):
+    """
+    Extract structured info (name, relation, context) from a sentence.
+    Uses local Phi-3 via Ollama.
+    """
+    from llm_extraction import extract_info_async
+    
+    result = await extract_info_async(request.text)
+    
+    return {
+        "name": result.name,
+        "relation": result.relation,
+        "context": result.context,
+        "success": any([result.name, result.relation, result.context])
+    }
+
+
+
 @app.get("/people", response_model=list[Person])
 async def list_people():
     """Get all known people."""

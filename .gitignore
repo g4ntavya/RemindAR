@@ -65,7 +65,7 @@ logs/
 .env.test.local
 .env.production.local
 
-# Firebase credentials (NEVER COMMIT)
+# Firebase credentials
 firebase-credentials.json
 *-firebase-*.json
 *.serviceAccountKey.json

@@ -1,6 +1,6 @@
 /**
- * Registration Modal with Whisper STT
- * Name, Relation, Context fields with voice input
+ * Registration Modal with Voice + LLM Auto-fill
+ * Records voice -> Whisper -> Phi-3 -> Auto-fills form
  */
 
 import { useState, useEffect } from 'react';
@@ -35,14 +35,14 @@ export function RegistrationModal({
     const [context, setContext] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // Whisper STT
     const {
         isRecording,
-        isTranscribing,
+        isProcessing,
         transcript,
+        extracted,
         startRecording,
         stopRecording,
-        resetTranscript,
+        reset,
     } = useSpeechToText();
 
     // Reset on open
@@ -52,18 +52,20 @@ export function RegistrationModal({
             setRelation('');
             setContext('');
             setIsSubmitting(false);
-            resetTranscript();
+            reset();
         }
-    }, [isOpen, resetTranscript]);
+    }, [isOpen, reset]);
 
-    // Apply transcript to context when received
+    // Auto-fill from LLM extraction
     useEffect(() => {
-        if (transcript) {
-            setContext(prev => prev ? `${prev} ${transcript}` : transcript);
+        if (extracted) {
+            if (extracted.name && !name) setName(extracted.name);
+            if (extracted.relation && !relation) setRelation(extracted.relation);
+            if (extracted.context && !context) setContext(extracted.context);
         }
-    }, [transcript]);
+    }, [extracted, name, relation, context]);
 
-    const handleVoiceButton = async () => {
+    const handleVoice = async () => {
         if (isRecording) {
             await stopRecording();
         } else {
@@ -99,30 +101,53 @@ export function RegistrationModal({
             e.preventDefault();
             handleSubmit();
         }
-        if (e.key === 'Escape') {
-            onClose();
-        }
+        if (e.key === 'Escape') onClose();
     };
 
     if (!isOpen) return null;
+
+    const voiceLabel = isProcessing
+        ? 'Processing...'
+        : isRecording
+            ? 'Stop'
+            : 'Speak';
 
     return (
         <div className="ar-modal-overlay" onClick={onClose}>
             <div className="ar-modal" onClick={e => e.stopPropagation()} onKeyDown={handleKeyDown}>
                 {faceImageBase64 && (
                     <div className="ar-face-preview">
-                        <img src={faceImageBase64} alt="Face" />
+                        <img src={faceImageBase64} alt="" />
                     </div>
                 )}
 
                 <div className="ar-modal-content">
                     <h3 className="ar-modal-title">ADD PERSON</h3>
 
+                    {/* Voice button */}
+                    <button
+                        type="button"
+                        className={`ar-voice-btn ${isRecording ? 'active' : ''}`}
+                        onClick={handleVoice}
+                        disabled={isProcessing}
+                    >
+                        {isRecording && '🔴 '}
+                        {voiceLabel}
+                        {!isRecording && !isProcessing && ' — "That\'s John, my friend"'}
+                    </button>
+
+                    {/* Transcript preview */}
+                    {transcript && (
+                        <div className="ar-transcript">
+                            "{transcript}"
+                        </div>
+                    )}
+
                     <div className="ar-form">
                         <input
                             type="text"
                             className="ar-input"
-                            placeholder="Name *"
+                            placeholder="Name"
                             value={name}
                             onChange={e => setName(e.target.value)}
                             autoFocus
@@ -131,32 +156,18 @@ export function RegistrationModal({
                         <input
                             type="text"
                             className="ar-input"
-                            placeholder="Relation (Friend, Doctor...)"
+                            placeholder="Relation"
                             value={relation}
                             onChange={e => setRelation(e.target.value)}
                         />
 
                         <textarea
                             className="ar-input ar-textarea"
-                            placeholder="Context (optional)"
+                            placeholder="Context"
                             value={context}
                             onChange={e => setContext(e.target.value)}
                             rows={2}
                         />
-
-                        {/* Voice input for context */}
-                        <button
-                            type="button"
-                            className={`ar-voice-btn ${isRecording ? 'active' : ''}`}
-                            onClick={handleVoiceButton}
-                            disabled={isTranscribing}
-                        >
-                            {isTranscribing
-                                ? '⏳ Transcribing...'
-                                : isRecording
-                                    ? '🔴 Stop Recording'
-                                    : '🎤 Add voice note'}
-                        </button>
                     </div>
 
                     <div className="ar-modal-actions">
@@ -166,7 +177,7 @@ export function RegistrationModal({
                         <button
                             className="ar-btn ar-btn-confirm"
                             onClick={handleSubmit}
-                            disabled={!name.trim() || isSubmitting}
+                            disabled={!name.trim() || isSubmitting || isProcessing}
                         >
                             {isSubmitting ? 'Saving...' : 'Save'}
                         </button>
