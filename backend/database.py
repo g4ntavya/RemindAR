@@ -90,6 +90,30 @@ def add_person(
         return False
 
 
+def update_person(
+    person_id: str,
+    name: str,
+    relation: str,
+    last_met: str,
+    context: str
+) -> bool:
+    """Update an existing person's details (not embedding)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        UPDATE people 
+        SET name = ?, relation = ?, last_met = ?, context = ?
+        WHERE id = ?
+    """, (name, relation, last_met, context, person_id))
+    conn.commit()
+    
+    if cursor.rowcount > 0:
+        print(f"[DB] Updated person: {name} ({person_id})")
+        return True
+    return False
+
+
 def update_embedding(person_id: str, embedding: np.ndarray) -> bool:
     """Update the face embedding for a person."""
     conn = get_connection()

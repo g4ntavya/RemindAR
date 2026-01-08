@@ -298,6 +298,20 @@ body,
   font-family: 'Inter', sans-serif;
   white-space: nowrap;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+}
+
+.label-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.label-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .label-name {
@@ -308,21 +322,94 @@ body,
 }
 
 .label-relation {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.5);
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.label-date {
+  font-size: 10px;
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.3);
+  margin-top: 4px;
 }
 
 .label-context {
-  font-size: 11px;
-  font-weight: 400;
-  color: rgba(255, 255, 255, 0.4);
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.75);
+  max-width: 220px;
+  white-space: normal;
+  margin: 4px 0 0 0;
+  line-height: 1.3;
 }
 
-/* Add Person Button - Minimal */
+/* Expand button */
+.expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 20px;
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.35);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.2s ease;
+}
+
+.expand-btn:hover {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.expand-btn.rotated {
+  transform: rotate(90deg);
+}
+
+/* Modify container with smooth animation */
+.modify-container {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.3s ease,
+    margin 0.3s ease;
+  margin-top: 0;
+}
+
+.modify-container.show {
+  max-height: 50px;
+  opacity: 1;
+  margin-top: 12px;
+}
+
+/* Modify button */
+.modify-btn {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.modify-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Add Person Button */
 .add-person-btn {
   display: block;
   margin-top: 12px;

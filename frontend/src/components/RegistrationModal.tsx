@@ -1,15 +1,16 @@
 /**
- * Registration Modal with Voice + LLM Auto-fill
- * Records voice -> Whisper -> Phi-3 -> Auto-fills form
+ * Registration Modal with prefill support and immediate LLM updates
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSpeechToText } from '../hooks/useSpeechToText';
+import { Person } from '../types';
 
 interface RegistrationModalProps {
     isOpen: boolean;
     trackId: string;
     faceImageBase64?: string;
+    existingPerson?: Person | null;
     onClose: () => void;
     onSubmit: (data: RegistrationData) => void;
 }
@@ -27,6 +28,7 @@ export function RegistrationModal({
     isOpen,
     trackId,
     faceImageBase64,
+    existingPerson,
     onClose,
     onSubmit,
 }: RegistrationModalProps) {
@@ -35,35 +37,56 @@ export function RegistrationModal({
     const [context, setContext] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    const prevUpdateKeyRef = useRef(0);
+
     const {
         isRecording,
         isProcessing,
         transcript,
         extracted,
+        updateKey,
         startRecording,
         stopRecording,
         reset,
     } = useSpeechToText();
 
-    // Reset on open
+    const isEditing = !!existingPerson;
+
+    // Reset on open and prefill if editing
     useEffect(() => {
         if (isOpen) {
-            setName('');
-            setRelation('');
-            setContext('');
+            if (existingPerson) {
+                setName(existingPerson.name || '');
+                setRelation(existingPerson.relation || '');
+                setContext(existingPerson.context || '');
+            } else {
+                setName('');
+                setRelation('');
+                setContext('');
+            }
             setIsSubmitting(false);
             reset();
+            prevUpdateKeyRef.current = 0;
         }
-    }, [isOpen, reset]);
+    }, [isOpen, existingPerson, reset]);
 
-    // Auto-fill from LLM extraction
+    // LLM OVERWRITES fields when extraction updates
     useEffect(() => {
-        if (extracted) {
-            if (extracted.name && !name) setName(extracted.name);
-            if (extracted.relation && !relation) setRelation(extracted.relation);
-            if (extracted.context && !context) setContext(extracted.context);
+        if (extracted && updateKey > prevUpdateKeyRef.current) {
+            console.log('[Modal] Applying extracted:', extracted);
+            prevUpdateKeyRef.current = updateKey;
+
+            if (extracted.name) {
+                setName(extracted.name);
+            }
+            if (extracted.relation) {
+                setRelation(extracted.relation);
+            }
+            if (extracted.context) {
+                setContext(extracted.context);
+            }
         }
-    }, [extracted, name, relation, context]);
+    }, [extracted, updateKey]);
 
     const handleVoice = async () => {
         if (isRecording) {
@@ -106,12 +129,6 @@ export function RegistrationModal({
 
     if (!isOpen) return null;
 
-    const voiceLabel = isProcessing
-        ? 'Processing...'
-        : isRecording
-            ? 'Stop'
-            : 'Speak';
-
     return (
         <div className="ar-modal-overlay" onClick={onClose}>
             <div className="ar-modal" onClick={e => e.stopPropagation()} onKeyDown={handleKeyDown}>
@@ -122,7 +139,9 @@ export function RegistrationModal({
                 )}
 
                 <div className="ar-modal-content">
-                    <h3 className="ar-modal-title">ADD PERSON</h3>
+                    <h3 className="ar-modal-title">
+                        {isEditing ? 'MODIFY PERSON' : 'ADD PERSON'}
+                    </h3>
 
                     {/* Voice button */}
                     <button
@@ -131,16 +150,16 @@ export function RegistrationModal({
                         onClick={handleVoice}
                         disabled={isProcessing}
                     >
-                        {isRecording && '🔴 '}
-                        {voiceLabel}
-                        {!isRecording && !isProcessing && ' — "That\'s John, my friend"'}
+                        {isProcessing
+                            ? '⏳ Processing...'
+                            : isRecording
+                                ? '🔴 Stop'
+                                : '🎤 Speak'}
                     </button>
 
-                    {/* Transcript preview */}
+                    {/* Transcript */}
                     {transcript && (
-                        <div className="ar-transcript">
-                            "{transcript}"
-                        </div>
+                        <div className="ar-transcript">"{transcript}"</div>
                     )}
 
                     <div className="ar-form">
@@ -179,7 +198,7 @@ export function RegistrationModal({
                             onClick={handleSubmit}
                             disabled={!name.trim() || isSubmitting || isProcessing}
                         >
-                            {isSubmitting ? 'Saving...' : 'Save'}
+                            {isSubmitting ? 'Saving...' : isEditing ? 'Update' : 'Save'}
                         </button>
                     </div>
                 </div>

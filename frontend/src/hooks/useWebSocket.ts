@@ -1,15 +1,16 @@
 /**
- * WebSocket hook - Fixed version with proper React state updates
- * The key fix: use a counter to force re-renders when results change
+ * WebSocket hook - FIXED VERSION
+ * 
+ * ROOT CAUSE OF TAB-SWITCH BUG:
+ * - Previously returned resultsRef.current (same Map reference)
+ * - React couldn't detect the Map had changed because reference was same
+ * - Now we create a NEW Map on every update so React sees a new object
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ConnectionStatus, FaceData, RecognitionResult } from '../types';
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
-
-const INITIAL_RETRY_DELAY = 1000;
-const MAX_RETRY_DELAY = 10000;
 const HEARTBEAT_INTERVAL = 15000;
 
 interface UseWebSocketReturn {
@@ -18,26 +19,18 @@ interface UseWebSocketReturn {
     results: Map<string, RecognitionResult>;
     clearResult: (trackId: string) => void;
     clearAllResults: () => void;
-    updateCounter: number; // Force re-render trigger
 }
 
 export function useWebSocket(): UseWebSocketReturn {
     const [status, setStatus] = useState<ConnectionStatus>('connecting');
-    const [updateCounter, setUpdateCounter] = useState(0);
 
-    // Use ref for results to avoid closure issues, but trigger re-render with counter
-    const resultsRef = useRef<Map<string, RecognitionResult>>(new Map());
+    // KEY FIX: Use useState for results so React tracks changes
+    const [results, setResults] = useState<Map<string, RecognitionResult>>(new Map());
 
     const wsRef = useRef<WebSocket | null>(null);
-    const retryDelayRef = useRef(INITIAL_RETRY_DELAY);
     const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
     const heartbeatRef = useRef<ReturnType<typeof setInterval>>();
     const mountedRef = useRef(true);
-
-    // Force component re-render
-    const forceUpdate = useCallback(() => {
-        setUpdateCounter(c => c + 1);
-    }, []);
 
     const connect = useCallback(() => {
         if (!mountedRef.current) return;
@@ -52,7 +45,6 @@ export function useWebSocket(): UseWebSocketReturn {
             ws.onopen = () => {
                 console.log('[WS] Connected');
                 setStatus('connected');
-                retryDelayRef.current = INITIAL_RETRY_DELAY;
 
                 heartbeatRef.current = setInterval(() => {
                     if (ws.readyState === WebSocket.OPEN) {
@@ -69,10 +61,8 @@ export function useWebSocket(): UseWebSocketReturn {
                 if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
 
                 if (mountedRef.current) {
-                    const delay = retryDelayRef.current;
-                    retryDelayRef.current = Math.min(delay * 1.5, MAX_RETRY_DELAY);
-                    console.log(`[WS] Reconnecting in ${delay}ms...`);
-                    reconnectTimeoutRef.current = setTimeout(connect, delay);
+                    console.log('[WS] Reconnecting in 2s...');
+                    reconnectTimeoutRef.current = setTimeout(connect, 2000);
                 }
             };
 
@@ -85,18 +75,20 @@ export function useWebSocket(): UseWebSocketReturn {
                     if (message.type === 'recognition_result' && message.data) {
                         const result = message.data as RecognitionResult;
                         const name = result.is_known ? result.display_lines?.[0] : 'Unknown';
-                        console.log(`[WS] Result: ${result.track_id.slice(0, 6)} -> ${name} (${(result.confidence * 100).toFixed(0)}%)`);
+                        console.log(`[WS] ${result.track_id.slice(0, 6)} -> ${name}`);
 
-                        // Update ref and force re-render
-                        resultsRef.current.set(result.track_id, result);
-                        forceUpdate();
+                        // KEY FIX: Create NEW Map to trigger React re-render
+                        setResults(prev => {
+                            const next = new Map(prev);
+                            next.set(result.track_id, result);
+                            return next;
+                        });
                     }
 
                     if (message.type === 'person_registered' && message.data) {
                         console.log('[WS] Person registered:', message.data.name);
-                        // Clear all results to force re-recognition
-                        resultsRef.current.clear();
-                        forceUpdate();
+                        // Clear all results - create NEW empty Map
+                        setResults(new Map());
                     }
                 } catch (e) {
                     console.error('[WS] Parse error:', e);
@@ -108,7 +100,7 @@ export function useWebSocket(): UseWebSocketReturn {
             console.error('[WS] Connection error:', error);
             setStatus('disconnected');
         }
-    }, [forceUpdate]);
+    }, []);
 
     const sendFaceData = useCallback((data: FaceData) => {
         if (wsRef.current?.readyState !== WebSocket.OPEN) return;
@@ -125,14 +117,16 @@ export function useWebSocket(): UseWebSocketReturn {
     }, []);
 
     const clearResult = useCallback((trackId: string) => {
-        resultsRef.current.delete(trackId);
-        forceUpdate();
-    }, [forceUpdate]);
+        setResults(prev => {
+            const next = new Map(prev);
+            next.delete(trackId);
+            return next;
+        });
+    }, []);
 
     const clearAllResults = useCallback(() => {
-        resultsRef.current.clear();
-        forceUpdate();
-    }, [forceUpdate]);
+        setResults(new Map());
+    }, []);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -152,9 +146,8 @@ export function useWebSocket(): UseWebSocketReturn {
     return {
         status,
         sendFaceData,
-        results: resultsRef.current,
+        results,
         clearResult,
         clearAllResults,
-        updateCounter,
     };
 }

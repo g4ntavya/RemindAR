@@ -1,6 +1,6 @@
 /**
  * RemindAR - Main Application
- * Simplified and cleaned up version
+ * With modify person functionality
  */
 
 import { useRef, useState, useEffect, useCallback } from 'react';
@@ -12,6 +12,7 @@ import { RegistrationModal, RegistrationData } from './components/RegistrationMo
 import { useWebSocket } from './hooks/useWebSocket';
 import { useFaceDetection } from './hooks/useFaceDetection';
 import { cropFaceFromVideo } from './utils/faceUtils';
+import { Person } from './types';
 
 const RECOGNITION_INTERVAL = 500;
 
@@ -21,10 +22,11 @@ function App() {
     const [cameraReady, setCameraReady] = useState(false);
     const [cameraError, setCameraError] = useState<string | null>(null);
 
-    // Registration modal state
-    const [showRegistration, setShowRegistration] = useState(false);
-    const [registrationTrackId, setRegistrationTrackId] = useState('');
-    const [registrationFaceImage, setRegistrationFaceImage] = useState('');
+    // Registration/Modify modal state
+    const [showModal, setShowModal] = useState(false);
+    const [modalTrackId, setModalTrackId] = useState('');
+    const [modalFaceImage, setModalFaceImage] = useState('');
+    const [editingPerson, setEditingPerson] = useState<Person | null>(null);
 
     // Refs
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -32,7 +34,7 @@ function App() {
     const lastSendTimeRef = useRef<Map<string, number>>(new Map());
 
     // Hooks
-    const { status: wsStatus, sendFaceData, results, clearResult, updateCounter } = useWebSocket();
+    const { status: wsStatus, sendFaceData, results, clearResult } = useWebSocket();
     const { faces, isModelLoaded, error: detectionError } = useFaceDetection(videoRef);
 
     // Update dimensions
@@ -95,81 +97,108 @@ function App() {
         setCameraError(error);
     }, []);
 
-    const handleOpenRegistration = useCallback((trackId: string) => {
+    // Open modal for NEW person
+    const handleAddPerson = useCallback((trackId: string) => {
         const face = faces.get(trackId);
         if (face && videoRef.current) {
-            setRegistrationFaceImage(cropFaceFromVideo(videoRef.current, face.bbox) || '');
+            setModalFaceImage(cropFaceFromVideo(videoRef.current, face.bbox) || '');
         }
-        setRegistrationTrackId(trackId);
-        setShowRegistration(true);
+        setModalTrackId(trackId);
+        setEditingPerson(null); // Not editing, creating new
+        setShowModal(true);
     }, [faces]);
 
-    const handleRegistrationSubmit = useCallback(async (data: RegistrationData) => {
-        console.log('[App] Registering:', data.name);
+    // Open modal for EXISTING person (modify)
+    const handleModifyPerson = useCallback((personId: string) => {
+        // Find the person from results
+        for (const result of results.values()) {
+            if (result.person?.id === personId) {
+                setEditingPerson(result.person);
+                setModalTrackId('');
+                setModalFaceImage('');
+                setShowModal(true);
+                return;
+            }
+        }
+    }, [results]);
+
+    // Handle modal submit (create or update)
+    const handleModalSubmit = useCallback(async (data: RegistrationData) => {
+        const isEditing = !!editingPerson;
+        console.log('[App]', isEditing ? 'Updating:' : 'Creating:', data.name);
 
         try {
-            // Create person
-            const createRes = await fetch('http://localhost:8000/people', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name: data.name,
-                    relation: data.relation,
-                    last_met: data.lastMet,
-                    context: data.context,
-                }),
-            });
-
-            if (!createRes.ok) throw new Error('Failed to create person');
-            const person = await createRes.json();
-
-            // Register face
-            if (data.faceImageBase64) {
-                const faceRes = await fetch(`http://localhost:8000/register-face/${person.id}`, {
-                    method: 'POST',
+            if (isEditing && editingPerson) {
+                // UPDATE existing person
+                const updateRes = await fetch(`http://localhost:8000/people/${editingPerson.id}`, {
+                    method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        track_id: data.trackId,
-                        image_base64: data.faceImageBase64,
+                        name: data.name,
+                        relation: data.relation,
+                        last_met: data.lastMet,
+                        context: data.context,
                     }),
                 });
 
-                if (!faceRes.ok) {
-                    console.error('[App] Face registration failed');
-                }
-            }
+                if (!updateRes.ok) throw new Error('Failed to update person');
+                console.log('[App] Updated:', data.name);
+            } else {
+                // CREATE new person
+                const createRes = await fetch('http://localhost:8000/people', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: data.name,
+                        relation: data.relation,
+                        last_met: data.lastMet,
+                        context: data.context,
+                    }),
+                });
 
-            // Clear and resend for immediate recognition
-            clearResult(data.trackId);
-            lastSendTimeRef.current.delete(data.trackId);
+                if (!createRes.ok) throw new Error('Failed to create person');
+                const person = await createRes.json();
 
-            // Send multiple times to ensure recognition
-            const resend = () => {
-                const face = faces.get(data.trackId);
-                if (face && videoRef.current) {
-                    const img = cropFaceFromVideo(videoRef.current, face.bbox);
-                    if (img) {
-                        sendFaceData({
+                // Register face for new person
+                if (data.faceImageBase64) {
+                    await fetch(`http://localhost:8000/register-face/${person.id}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
                             track_id: data.trackId,
-                            image_base64: img,
-                            bbox: face.bbox,
-                            timestamp: Date.now(),
-                        });
-                    }
+                            image_base64: data.faceImageBase64,
+                        }),
+                    });
                 }
-            };
 
-            resend();
-            setTimeout(resend, 300);
-            setTimeout(resend, 600);
-            setTimeout(resend, 900);
+                // Clear and resend for recognition
+                clearResult(data.trackId);
+                lastSendTimeRef.current.delete(data.trackId);
 
-            console.log('[App] Registration complete:', person.name);
+                const resend = () => {
+                    const face = faces.get(data.trackId);
+                    if (face && videoRef.current) {
+                        const img = cropFaceFromVideo(videoRef.current, face.bbox);
+                        if (img) {
+                            sendFaceData({
+                                track_id: data.trackId,
+                                image_base64: img,
+                                bbox: face.bbox,
+                                timestamp: Date.now(),
+                            });
+                        }
+                    }
+                };
+
+                resend();
+                setTimeout(resend, 300);
+                setTimeout(resend, 600);
+            }
         } catch (error) {
-            console.error('[App] Registration error:', error);
-            alert('Failed to register. See console.');
+            console.error('[App] Error:', error);
+            alert('Failed. See console.');
         }
-    }, [clearResult, faces, sendFaceData]);
+    }, [editingPerson, clearResult, faces, sendFaceData]);
 
     // Landing page
     if (!isDemoActive) {
@@ -204,12 +233,12 @@ function App() {
 
             {cameraReady && dimensions.width > 0 && (
                 <AROverlay
-                    key={updateCounter}
                     faces={faces}
                     results={results}
                     containerWidth={dimensions.width}
                     containerHeight={dimensions.height}
-                    onAddPerson={handleOpenRegistration}
+                    onAddPerson={handleAddPerson}
+                    onModifyPerson={handleModifyPerson}
                 />
             )}
 
@@ -218,11 +247,12 @@ function App() {
             </button>
 
             <RegistrationModal
-                isOpen={showRegistration}
-                trackId={registrationTrackId}
-                faceImageBase64={registrationFaceImage}
-                onClose={() => setShowRegistration(false)}
-                onSubmit={handleRegistrationSubmit}
+                isOpen={showModal}
+                trackId={modalTrackId}
+                faceImageBase64={modalFaceImage}
+                existingPerson={editingPerson}
+                onClose={() => setShowModal(false)}
+                onSubmit={handleModalSubmit}
             />
         </div>
     );

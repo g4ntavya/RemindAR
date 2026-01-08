@@ -1,9 +1,9 @@
 /**
  * Speech-to-Text Hook with LLM Extraction
- * Records audio -> Whisper transcription -> Phi-3 extraction
+ * Optimized for real-time updates
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useReducer } from 'react';
 
 interface ExtractedInfo {
     name: string | null;
@@ -11,31 +11,62 @@ interface ExtractedInfo {
     context: string | null;
 }
 
-interface UseSpeechToTextReturn {
+interface STTState {
     isRecording: boolean;
     isProcessing: boolean;
     transcript: string;
     extracted: ExtractedInfo | null;
     error: string | null;
-    startRecording: () => void;
-    stopRecording: () => Promise<ExtractedInfo | null>;
-    reset: () => void;
+    updateKey: number; // Forces re-render
 }
 
-export function useSpeechToText(): UseSpeechToTextReturn {
-    const [isRecording, setIsRecording] = useState(false);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [transcript, setTranscript] = useState('');
-    const [extracted, setExtracted] = useState<ExtractedInfo | null>(null);
-    const [error, setError] = useState<string | null>(null);
+type STTAction =
+    | { type: 'START_RECORDING' }
+    | { type: 'STOP_RECORDING' }
+    | { type: 'SET_PROCESSING'; value: boolean }
+    | { type: 'SET_TRANSCRIPT'; value: string }
+    | { type: 'SET_EXTRACTED'; value: ExtractedInfo }
+    | { type: 'SET_ERROR'; value: string }
+    | { type: 'RESET' };
 
+function reducer(state: STTState, action: STTAction): STTState {
+    switch (action.type) {
+        case 'START_RECORDING':
+            return { ...state, isRecording: true, error: null, extracted: null, updateKey: state.updateKey + 1 };
+        case 'STOP_RECORDING':
+            return { ...state, isRecording: false, updateKey: state.updateKey + 1 };
+        case 'SET_PROCESSING':
+            return { ...state, isProcessing: action.value, updateKey: state.updateKey + 1 };
+        case 'SET_TRANSCRIPT':
+            return { ...state, transcript: action.value, updateKey: state.updateKey + 1 };
+        case 'SET_EXTRACTED':
+            return { ...state, extracted: action.value, isProcessing: false, updateKey: state.updateKey + 1 };
+        case 'SET_ERROR':
+            return { ...state, error: action.value, isProcessing: false, updateKey: state.updateKey + 1 };
+        case 'RESET':
+            return { ...state, transcript: '', extracted: null, error: null, updateKey: state.updateKey + 1 };
+        default:
+            return state;
+    }
+}
+
+const initialState: STTState = {
+    isRecording: false,
+    isProcessing: false,
+    transcript: '',
+    extracted: null,
+    error: null,
+    updateKey: 0,
+};
+
+export function useSpeechToText() {
+    const [state, dispatch] = useReducer(reducer, initialState);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<Blob[]>([]);
 
     const startRecording = useCallback(async () => {
-        setError(null);
-        setExtracted(null);
         chunksRef.current = [];
+        dispatch({ type: 'START_RECORDING' });
 
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -53,12 +84,11 @@ export function useSpeechToText(): UseSpeechToTextReturn {
             };
 
             mediaRecorderRef.current = mediaRecorder;
-            mediaRecorder.start(1000);
-            setIsRecording(true);
-            console.log('[STT] Recording started');
+            mediaRecorder.start(500); // Smaller chunks
+            console.log('[STT] Recording...');
         } catch (err) {
             console.error('[STT] Mic error:', err);
-            setError('Failed to access microphone');
+            dispatch({ type: 'SET_ERROR', value: 'Microphone access failed' });
         }
     }, []);
 
@@ -72,17 +102,15 @@ export function useSpeechToText(): UseSpeechToTextReturn {
             }
 
             mediaRecorder.onstop = async () => {
-                setIsRecording(false);
-                setIsProcessing(true);
-                console.log('[STT] Processing audio...');
+                dispatch({ type: 'STOP_RECORDING' });
+                dispatch({ type: 'SET_PROCESSING', value: true });
+                console.log('[STT] Processing...');
 
-                // Stop tracks
                 mediaRecorder.stream.getTracks().forEach(track => track.stop());
-
                 const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
 
                 try {
-                    // Step 1: Transcribe with Whisper
+                    // Transcribe
                     const formData = new FormData();
                     formData.append('audio', audioBlob, 'recording.webm');
 
@@ -94,18 +122,17 @@ export function useSpeechToText(): UseSpeechToTextReturn {
                     const transcribeData = await transcribeRes.json();
 
                     if (!transcribeData.success || !transcribeData.text) {
-                        setError('Transcription failed');
-                        setIsProcessing(false);
+                        dispatch({ type: 'SET_ERROR', value: 'Transcription failed' });
                         resolve(null);
                         return;
                     }
 
-                    const text = transcribeData.text;
-                    setTranscript(text);
-                    console.log('[STT] Transcript:', text);
+                    const text = transcribeData.text.trim();
+                    dispatch({ type: 'SET_TRANSCRIPT', value: text });
+                    console.log('[STT] Text:', text);
 
-                    // Step 2: Extract with Phi-3
-                    console.log('[STT] Extracting info...');
+                    // Extract
+                    console.log('[STT] Extracting...');
                     const extractRes = await fetch('http://localhost:8000/api/extract', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -113,6 +140,7 @@ export function useSpeechToText(): UseSpeechToTextReturn {
                     });
 
                     const extractData = await extractRes.json();
+                    console.log('[STT] Raw extract:', extractData);
 
                     const info: ExtractedInfo = {
                         name: extractData.name || null,
@@ -120,16 +148,13 @@ export function useSpeechToText(): UseSpeechToTextReturn {
                         context: extractData.context || null,
                     };
 
-                    setExtracted(info);
                     console.log('[STT] Extracted:', info);
-
-                    setIsProcessing(false);
+                    dispatch({ type: 'SET_EXTRACTED', value: info });
                     resolve(info);
 
                 } catch (err) {
                     console.error('[STT] Error:', err);
-                    setError('Processing failed');
-                    setIsProcessing(false);
+                    dispatch({ type: 'SET_ERROR', value: 'Processing failed' });
                     resolve(null);
                 }
             };
@@ -139,17 +164,16 @@ export function useSpeechToText(): UseSpeechToTextReturn {
     }, []);
 
     const reset = useCallback(() => {
-        setTranscript('');
-        setExtracted(null);
-        setError(null);
+        dispatch({ type: 'RESET' });
     }, []);
 
     return {
-        isRecording,
-        isProcessing,
-        transcript,
-        extracted,
-        error,
+        isRecording: state.isRecording,
+        isProcessing: state.isProcessing,
+        transcript: state.transcript,
+        extracted: state.extracted,
+        error: state.error,
+        updateKey: state.updateKey,
         startRecording,
         stopRecording,
         reset,

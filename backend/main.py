@@ -429,6 +429,36 @@ async def create_person(person: PersonCreate):
     return created_person
 
 
+@app.put("/people/{person_id}", response_model=Person)
+async def update_person(person_id: str, person: PersonCreate):
+    """Update an existing person's details."""
+    from database import update_person as db_update_person
+    
+    existing = get_person(person_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Person not found")
+    
+    success = db_update_person(
+        person_id=person_id,
+        name=person.name,
+        relation=person.relation,
+        last_met=person.last_met,
+        context=person.context
+    )
+    
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to update person")
+    
+    updated_person = get_person(person_id)
+    
+    # Sync to Firebase
+    sync_person_to_firebase(updated_person)
+    
+    print(f"[API] Updated person: {person.name} ({person_id})")
+    return updated_person
+
+
+
 @app.post("/register-face/{person_id}")
 async def register_face(person_id: str, face_data: FaceData):
     """
