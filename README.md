@@ -1,50 +1,37 @@
-# RemindAR - AI-Powered AR Memory Assistant
+# RemindAR
 
-An emotional, demo-ready AR memory assistant that helps people with memory loss recognize faces and remember important context about the people in their lives.
-
-![RemindAR Demo](https://via.placeholder.com/800x400/0a0a0f/ffffff?text=RemindAR+-+AR+Memory+Assistant)
-
-## 🎯 What It Does
-
-RemindAR uses your webcam to simulate AR glasses:
-1. **Detects faces** in real-time using MediaPipe (in-browser)
-2. **Recognizes identities** using InsightFace deep learning embeddings
-3. **Displays floating AR labels** with name, relationship, and context
-4. **Smooth, calm animations** designed for accessibility
-
-## ✨ Features
-
-- 🎥 **Real-time face detection** - MediaPipe running entirely in-browser
-- 🧠 **AI-powered recognition** - InsightFace generates face embeddings for matching
-- 🎭 **Smooth AR overlays** - Three.js renders floating text labels
-- 💾 **Persistent memory** - SQLite stores identities and context
-- 🌐 **WebSocket communication** - Low-latency real-time updates
-- ♿ **Accessibility-first** - Large fonts, soft glow, minimal motion
+A real-time face recognition system with AR overlays, designed to help people with memory challenges recognize and remember the people in their lives.
 
 ---
 
-## 🚀 Quick Start
+## Overview
 
-### Prerequisites
+RemindAR uses your webcam to detect faces, recognize identities, and display contextual information as floating labels. Think of it as a prototype for smart glasses that could help someone with dementia remember their family, caregivers, and friends.
 
-- **Python 3.9+** (for backend)
-- **Node.js 18+** (for frontend)
-- **Webcam** with browser access permissions
+**How it works:**
+- Face detection runs in the browser using MediaPipe
+- Face recognition uses InsightFace embeddings on the backend
+- Data syncs between local SQLite and Firebase Firestore
+- AR labels appear beside recognized faces with name, relation, and context
 
-### 1. Clone the Repository
+---
 
-```bash
-cd /path/to/RemindAR
-```
+## Getting Started
 
-### 2. Start the Backend
+### Requirements
+
+- Python 3.9+
+- Node.js 18+
+- A webcam
+
+### Backend Setup
 
 ```bash
 cd backend
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Create and activate virtual environment
+python -m venv .venv
+source .venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -53,235 +40,155 @@ pip install -r requirements.txt
 python main.py
 ```
 
-The backend will:
-- Initialize the SQLite database
-- Download InsightFace model (~300MB on first run)
-- Start WebSocket server on `ws://localhost:8000/ws`
+On first run, the InsightFace model (~300MB) downloads automatically.
 
-### 3. Start the Frontend
+### Frontend Setup
 
 ```bash
 cd frontend
 
-# Install dependencies
 npm install
-
-# Start development server
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser.
-
-### 4. Allow Camera Access
-
-When prompted, allow camera access to see the AR overlay in action.
+Open `http://localhost:5173` and allow camera access.
 
 ---
 
-## 📋 Demo Flow
+## Features
 
-1. **Start both servers** (backend and frontend)
-2. **Open the frontend** in your browser
-3. **Allow camera access** when prompted
-4. **Show a face** - You'll see "Analyzing..." then either:
-   - **Known person**: Name, relation, and context appear
-   - **Unknown person**: "New Person" label appears
+**Face Detection**  
+MediaPipe runs entirely in-browser for fast, low-latency detection.
 
-### Pre-loaded Demo Identities
+**Face Recognition**  
+InsightFace generates 512-dimensional embeddings. Faces are matched using cosine similarity against a local cache.
 
-The database comes seeded with 4 demo identities:
-- **Sarah** - Daughter
-- **Dr. Patel** - Doctor
-- **Mike** - Neighbor
-- **Emma** - Granddaughter
+**Hybrid Storage**  
+Firebase Firestore for cloud sync, SQLite for fast local reads. On startup, Firestore data syncs to SQLite, then loads into an in-memory cache.
 
-> **Note**: These identities need face photos to be registered before recognition works. See [Registering Faces](#registering-faces) below.
+**Voice Input**  
+Local Whisper transcription for adding context via voice. No cloud API needed.
+
+**Real-time Updates**  
+WebSocket connection streams recognition results instantly. No polling.
 
 ---
 
-## 🖼️ Registering Faces
+## Registering Faces
 
-To register a face for a known identity:
+When the system detects an unknown face, an "Add this person" button appears. Click it to open the registration form.
 
-### Option 1: REST API
+Fields:
+- Name (required)
+- Relation (e.g., Doctor, Friend, Daughter)
+- Context (notes about the person, supports voice input)
 
-```bash
-# Register a face for an existing person
-curl -X POST "http://localhost:8000/register-face/demo_001" \
-  -H "Content-Type: application/json" \
-  -d '{"track_id": "sarah_1", "image_base64": "<base64-encoded-face-image>"}'
+After registration, the face is immediately recognized.
+
+---
+
+## Architecture
+
 ```
+Frontend (React + TypeScript)
+├── MediaPipe face detection
+├── Face tracking with smoothing
+├── WebSocket client for recognition
+└── AR overlay with CSS positioning
 
-### Option 2: Add New Person
-
-```bash
-# Create a new person
-curl -X POST "http://localhost:8000/people" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "John",
-    "relation": "Son",
-    "last_met": "Today",
-    "context": "Brought groceries"
-  }'
+Backend (FastAPI + Python)
+├── WebSocket server
+├── InsightFace recognition
+├── SQLite + Firebase storage
+└── Whisper transcription
 ```
 
 ---
 
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                         FRONTEND                            │
-│  ┌──────────┐  ┌──────────────┐  ┌───────────────────────┐  │
-│  │  Camera  │→ │  MediaPipe   │→ │  Face Tracking +      │  │
-│  │  (WebRTC)│  │  Detection   │  │  Bounding Box Smooth  │  │
-│  └──────────┘  └──────────────┘  └───────────────────────┘  │
-│                                            │                │
-│                                    ┌───────▼───────┐        │
-│                                    │  WebSocket    │        │
-│                                    │  (face crops) │        │
-│                                    └───────┬───────┘        │
-│  ┌──────────────────────────────┐          │                │
-│  │  Three.js AR Overlay         │←─────────┘                │
-│  │  (floating text labels)      │    (identity + context)   │
-│  └──────────────────────────────┘                           │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                     WebSocket Connection
-                              │
-┌─────────────────────────────────────────────────────────────┐
-│                         BACKEND                             │
-│  ┌──────────┐  ┌──────────────┐  ┌───────────────────────┐  │
-│  │  FastAPI │→ │  InsightFace │→ │  Embedding Matching   │  │
-│  │  Server  │  │  (buffalo_l) │  │  (cosine similarity)  │  │
-│  └──────────┘  └──────────────┘  └───────────────────────┘  │
-│                                            │                │
-│                                    ┌───────▼───────┐        │
-│                                    │    SQLite     │        │
-│                                    │  (identities) │        │
-│                                    └───────────────┘        │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 RemindAR/
 ├── backend/
-│   ├── main.py              # FastAPI server + WebSocket
+│   ├── main.py              # FastAPI server
 │   ├── face_recognition.py  # InsightFace integration
 │   ├── database.py          # SQLite operations
-│   ├── models.py            # Pydantic schemas
-│   └── requirements.txt     # Python dependencies
+│   ├── firebase_sync.py     # Firestore sync
+│   ├── speech_to_text.py    # Whisper STT
+│   └── models.py            # Data schemas
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx                  # Main application
+│   │   ├── App.tsx
 │   │   ├── components/
-│   │   │   ├── Camera.tsx           # Webcam capture
-│   │   │   ├── AROverlay.tsx        # Three.js overlay
-│   │   │   ├── PersonLabel.tsx      # Individual labels
-│   │   │   └── StatusIndicator.tsx  # Connection status
+│   │   │   ├── Camera.tsx
+│   │   │   ├── AROverlay.tsx
+│   │   │   └── RegistrationModal.tsx
 │   │   ├── hooks/
-│   │   │   ├── useWebSocket.ts      # WebSocket connection
-│   │   │   └── useFaceDetection.ts  # MediaPipe detection
-│   │   ├── utils/
-│   │   │   └── faceUtils.ts         # Helper functions
-│   │   ├── types/
-│   │   │   └── index.ts             # TypeScript types
+│   │   │   ├── useWebSocket.ts
+│   │   │   ├── useFaceDetection.ts
+│   │   │   └── useSpeechToText.ts
 │   │   └── styles/
-│   │       └── index.css            # Global styles
-│   ├── package.json
-│   └── vite.config.ts
+│   └── package.json
 │
 └── README.md
 ```
 
 ---
 
-## 🔧 Configuration
+## Configuration
 
-### Backend Environment
+**Backend**
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HOST` | `0.0.0.0` | Server host |
-| `PORT` | `8000` | Server port |
+The server runs on port 8000 by default.
 
-### Frontend Environment
+**Frontend**
 
-Create `.env` in `frontend/`:
+Create `.env` in the frontend directory:
 
 ```env
 VITE_WS_URL=ws://localhost:8000/ws
 ```
 
----
+**Firebase**
 
-## 🎨 UI Design Philosophy
-
-- **Text-only overlays** - No cards, boxes, or distracting UI
-- **Maximum 3 lines** - Name, relation, and context
-- **Soft white glow** - Readable on any background
-- **Gentle animations** - Fade in/out, subtle float
-- **Accessibility-first** - Large fonts, reduced motion support
+Place your `firebase-credentials.json` in the backend directory. If not present, the system falls back to SQLite-only storage.
 
 ---
 
-## 🔮 Future Expansion Points
+## Troubleshooting
 
-The following features are stubbed for future implementation:
+**Camera not working**  
+Check browser permissions. Try Chrome if using Safari.
 
-```typescript
-// TODO: Caregiver dashboard for managing identities
-// TODO: Voice-based memory capture
-// TODO: Long-term conversation memory with ChromaDB
-// TODO: Mobile AR (ARCore/ARKit) integration
-// TODO: Speaker diarization for multi-person conversations
-```
+**WebSocket disconnecting**  
+Ensure the backend is running. Check the browser console for errors.
 
----
+**Faces not recognized**  
+Make sure faces are registered first. Good lighting helps.
 
-## 🐛 Troubleshooting
-
-### Camera not working
-- Ensure browser has camera permissions
-- Try a different browser (Chrome recommended)
-- Check if another app is using the camera
-
-### WebSocket disconnected
-- Verify backend is running on port 8000
-- Check browser console for errors
-- Ensure no firewall blocking WebSocket
-
-### Faces not recognized
-- Register faces via the API first
-- Ensure good lighting and face visibility
-- Try adjusting similarity threshold in `face_recognition.py`
-
-### Slow performance
-- Close other camera-using applications
-- Reduce browser tab count
-- Try lowering detection resolution
+**Recognition only updates after switching tabs**  
+Refresh the browser to pick up the latest code changes.
 
 ---
 
-## 📄 License
+## Tech Stack
 
-MIT License - Feel free to use for hackathons and personal projects.
-
----
-
-## 🙏 Acknowledgments
-
-- [MediaPipe](https://mediapipe.dev/) - In-browser face detection
-- [InsightFace](https://github.com/deepinsight/insightface) - Face recognition embeddings
-- [Three.js](https://threejs.org/) - 3D WebGL rendering
-- [FastAPI](https://fastapi.tiangolo.com/) - Python web framework
+- FastAPI
+- MediaPipe
+- InsightFace
+- Firebase Firestore
+- Faster-Whisper
+- React
+- TypeScript
+- Vite
 
 ---
 
-Built with ❤️ for people with memory loss and their caregivers.
+## License
+
+MIT
+
+---
+
+Built for people with memory challenges and their caregivers.
