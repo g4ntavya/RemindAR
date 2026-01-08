@@ -1,35 +1,49 @@
 /**
- * WebSocket hook for real-time communication with backend
- * Handles connection management, reconnection, and message handling
+ * WebSocket hook - Fixed version with proper React state updates
+ * The key fix: use a counter to force re-renders when results change
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ConnectionStatus, FaceData, RecognitionResult } from '../types';
 
-// Backend WebSocket URL
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
+
+const INITIAL_RETRY_DELAY = 1000;
+const MAX_RETRY_DELAY = 10000;
+const HEARTBEAT_INTERVAL = 15000;
 
 interface UseWebSocketReturn {
     status: ConnectionStatus;
     sendFaceData: (data: FaceData) => void;
-    lastResult: RecognitionResult | null;
     results: Map<string, RecognitionResult>;
+    clearResult: (trackId: string) => void;
+    clearAllResults: () => void;
+    updateCounter: number; // Force re-render trigger
 }
 
 export function useWebSocket(): UseWebSocketReturn {
     const [status, setStatus] = useState<ConnectionStatus>('connecting');
-    const [lastResult, setLastResult] = useState<RecognitionResult | null>(null);
-    const [results, setResults] = useState<Map<string, RecognitionResult>>(new Map());
+    const [updateCounter, setUpdateCounter] = useState(0);
+
+    // Use ref for results to avoid closure issues, but trigger re-render with counter
+    const resultsRef = useRef<Map<string, RecognitionResult>>(new Map());
 
     const wsRef = useRef<WebSocket | null>(null);
+    const retryDelayRef = useRef(INITIAL_RETRY_DELAY);
     const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
-    const pingIntervalRef = useRef<ReturnType<typeof setInterval>>();
+    const heartbeatRef = useRef<ReturnType<typeof setInterval>>();
+    const mountedRef = useRef(true);
 
-    // Connect to WebSocket
+    // Force component re-render
+    const forceUpdate = useCallback(() => {
+        setUpdateCounter(c => c + 1);
+    }, []);
+
     const connect = useCallback(() => {
+        if (!mountedRef.current) return;
         if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-        console.log('[WS] Connecting to', WS_URL);
+        console.log('[WS] Connecting...');
         setStatus('connecting');
 
         try {
@@ -38,34 +52,31 @@ export function useWebSocket(): UseWebSocketReturn {
             ws.onopen = () => {
                 console.log('[WS] Connected');
                 setStatus('connected');
+                retryDelayRef.current = INITIAL_RETRY_DELAY;
 
-                // Start ping interval to keep connection alive
-                pingIntervalRef.current = setInterval(() => {
+                heartbeatRef.current = setInterval(() => {
                     if (ws.readyState === WebSocket.OPEN) {
                         ws.send(JSON.stringify({ type: 'ping' }));
                     }
-                }, 30000);
+                }, HEARTBEAT_INTERVAL);
             };
 
             ws.onclose = () => {
                 console.log('[WS] Disconnected');
                 setStatus('disconnected');
 
-                // Clear ping interval
-                if (pingIntervalRef.current) {
-                    clearInterval(pingIntervalRef.current);
+                if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+                if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+
+                if (mountedRef.current) {
+                    const delay = retryDelayRef.current;
+                    retryDelayRef.current = Math.min(delay * 1.5, MAX_RETRY_DELAY);
+                    console.log(`[WS] Reconnecting in ${delay}ms...`);
+                    reconnectTimeoutRef.current = setTimeout(connect, delay);
                 }
-
-                // Attempt reconnection after delay
-                reconnectTimeoutRef.current = setTimeout(() => {
-                    console.log('[WS] Attempting reconnection...');
-                    connect();
-                }, 2000);
             };
 
-            ws.onerror = (error) => {
-                console.error('[WS] Error:', error);
-            };
+            ws.onerror = () => { };
 
             ws.onmessage = (event) => {
                 try {
@@ -73,13 +84,19 @@ export function useWebSocket(): UseWebSocketReturn {
 
                     if (message.type === 'recognition_result' && message.data) {
                         const result = message.data as RecognitionResult;
+                        const name = result.is_known ? result.display_lines?.[0] : 'Unknown';
+                        console.log(`[WS] Result: ${result.track_id.slice(0, 6)} -> ${name} (${(result.confidence * 100).toFixed(0)}%)`);
 
-                        setLastResult(result);
-                        setResults(prev => {
-                            const updated = new Map(prev);
-                            updated.set(result.track_id, result);
-                            return updated;
-                        });
+                        // Update ref and force re-render
+                        resultsRef.current.set(result.track_id, result);
+                        forceUpdate();
+                    }
+
+                    if (message.type === 'person_registered' && message.data) {
+                        console.log('[WS] Person registered:', message.data.name);
+                        // Clear all results to force re-recognition
+                        resultsRef.current.clear();
+                        forceUpdate();
                     }
                 } catch (e) {
                     console.error('[WS] Parse error:', e);
@@ -91,29 +108,12 @@ export function useWebSocket(): UseWebSocketReturn {
             console.error('[WS] Connection error:', error);
             setStatus('disconnected');
         }
-    }, []);
+    }, [forceUpdate]);
 
-    // Disconnect and cleanup
-    const disconnect = useCallback(() => {
-        if (reconnectTimeoutRef.current) {
-            clearTimeout(reconnectTimeoutRef.current);
-        }
-        if (pingIntervalRef.current) {
-            clearInterval(pingIntervalRef.current);
-        }
-        if (wsRef.current) {
-            wsRef.current.close();
-            wsRef.current = null;
-        }
-    }, []);
-
-    // Send face data to backend
     const sendFaceData = useCallback((data: FaceData) => {
-        if (wsRef.current?.readyState !== WebSocket.OPEN) {
-            return;
-        }
+        if (wsRef.current?.readyState !== WebSocket.OPEN) return;
 
-        const message = {
+        wsRef.current.send(JSON.stringify({
             type: 'face_data',
             data: {
                 track_id: data.track_id,
@@ -121,21 +121,40 @@ export function useWebSocket(): UseWebSocketReturn {
                 bbox: data.bbox,
                 timestamp: data.timestamp || Date.now(),
             },
-        };
-
-        wsRef.current.send(JSON.stringify(message));
+        }));
     }, []);
 
-    // Connect on mount, disconnect on unmount
+    const clearResult = useCallback((trackId: string) => {
+        resultsRef.current.delete(trackId);
+        forceUpdate();
+    }, [forceUpdate]);
+
+    const clearAllResults = useCallback(() => {
+        resultsRef.current.clear();
+        forceUpdate();
+    }, [forceUpdate]);
+
     useEffect(() => {
+        mountedRef.current = true;
         connect();
-        return disconnect;
-    }, [connect, disconnect]);
+
+        return () => {
+            mountedRef.current = false;
+            if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+            if (wsRef.current) {
+                wsRef.current.close();
+                wsRef.current = null;
+            }
+        };
+    }, [connect]);
 
     return {
         status,
         sendFaceData,
-        lastResult,
-        results,
+        results: resultsRef.current,
+        clearResult,
+        clearAllResults,
+        updateCounter,
     };
 }

@@ -1,83 +1,68 @@
 /**
- * AR Overlay component using Three.js
- * Renders floating text labels in 3D space anchored to faces
+ * AR Overlay - Labels for detected faces
  */
 
-import { Canvas } from '@react-three/fiber';
 import { TrackedFace, RecognitionResult } from '../types';
-import { PersonLabel } from './PersonLabel';
-import { calculateLabelPosition } from '../utils/faceUtils';
 
 interface AROverlayProps {
     faces: Map<string, TrackedFace>;
     results: Map<string, RecognitionResult>;
     containerWidth: number;
     containerHeight: number;
+    onAddPerson?: (trackId: string) => void;
 }
 
 export function AROverlay({
     faces,
     results,
     containerWidth,
-    containerHeight
+    containerHeight,
+    onAddPerson,
 }: AROverlayProps) {
-    // Convert face positions to 3D label positions
-    const labels = Array.from(faces.entries()).map(([trackId, face]) => {
-        const result = results.get(trackId);
-
-        // Calculate screen position for the label
-        const screenPos = calculateLabelPosition(
-            face.bbox,
-            containerWidth,
-            containerHeight,
-            true // mirrored
-        );
-
-        // Convert screen coordinates to Three.js normalized coordinates
-        // Three.js uses a coordinate system where:
-        // x: -1 (left) to 1 (right)
-        // y: -1 (bottom) to 1 (top)
-        const threeX = (screenPos.x / containerWidth) * 2 - 1;
-        const threeY = -((screenPos.y / containerHeight) * 2 - 1);
-
-        return {
-            trackId,
-            position: [threeX * 5, threeY * 3, 0] as [number, number, number],
-            displayLines: result?.display_lines || ['Analyzing...', '', ''],
-            isKnown: result?.is_known || false,
-            isVisible: face.isVisible,
-        };
-    });
+    const visibleFaces = Array.from(faces.values()).filter(f => f.isVisible);
 
     return (
         <div className="ar-overlay">
-            <Canvas
-                orthographic
-                camera={{
-                    zoom: 100,
-                    position: [0, 0, 10],
-                    near: 0.1,
-                    far: 100,
-                }}
-                style={{
-                    background: 'transparent',
-                    pointerEvents: 'none',
-                }}
-            >
-                {/* Ambient light for HTML elements */}
-                <ambientLight intensity={1} />
+            {/* Debug */}
+            <div className="debug-indicator">
+                {visibleFaces.length} face{visibleFaces.length !== 1 ? 's' : ''} | {results.size} result{results.size !== 1 ? 's' : ''}
+            </div>
 
-                {/* Render labels for each tracked face */}
-                {labels.map(label => (
-                    <PersonLabel
-                        key={label.trackId}
-                        position={label.position}
-                        displayLines={label.displayLines}
-                        isKnown={label.isKnown}
-                        isVisible={label.isVisible}
-                    />
-                ))}
-            </Canvas>
+            {/* Face labels */}
+            {visibleFaces.map((face) => {
+                const result = results.get(face.id);
+                const isKnown = result?.is_known ?? false;
+                const name = result?.display_lines?.[0] || 'Scanning...';
+                const relation = result?.display_lines?.[1] || '';
+
+                // Position at right edge of face (mirrored)
+                const x = Math.min(
+                    Math.max(20, (1 - face.bbox.x) * containerWidth + 20),
+                    containerWidth - 250
+                );
+                const y = Math.min(
+                    Math.max(60, (face.bbox.y + face.bbox.height / 2) * containerHeight),
+                    containerHeight - 100
+                );
+
+                return (
+                    <div key={face.id} className="face-label" style={{ left: x, top: y }}>
+                        <div className="label-content">
+                            <span className="label-name">{name}</span>
+                            {relation && <span className="label-relation">{relation}</span>}
+                        </div>
+
+                        {!isKnown && onAddPerson && (
+                            <button
+                                className="add-person-btn"
+                                onClick={() => onAddPerson(face.id)}
+                            >
+                                Add this person
+                            </button>
+                        )}
+                    </div>
+                );
+            })}
         </div>
     );
 }

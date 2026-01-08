@@ -1,14 +1,18 @@
 """
 Face recognition module for RemindAR.
-Uses InsightFace for generating embeddings and matching identities.
+Uses InsightFace for embeddings - session-only cache from Firestore.
 """
 
 import numpy as np
 import cv2
 import base64
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, Dict
 from io import BytesIO
 from PIL import Image
+import warnings
+
+# Suppress the FutureWarning from insightface
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # InsightFace imports
 try:
@@ -16,147 +20,158 @@ try:
     INSIGHTFACE_AVAILABLE = True
 except ImportError:
     INSIGHTFACE_AVAILABLE = False
-    print("[WARN] InsightFace not installed. Face recognition will be disabled.")
-
-from database import get_all_people_with_embeddings
+    print("[WARN] InsightFace not installed")
 
 
 class FaceRecognizer:
     """
-    Face recognition engine using InsightFace.
-    Generates embeddings and matches against known identities.
+    Face recognition with session-only cache.
+    Loads from Firestore on startup, clears on shutdown.
     """
     
-    # Similarity threshold for considering a match
-    # Higher = stricter matching, fewer false positives
-    # Lower = more lenient, may have false positives
-    SIMILARITY_THRESHOLD = 0.45
+    SIMILARITY_THRESHOLD = 0.55  # 55% for lenient matching
     
     def __init__(self):
-        """Initialize the face recognition model."""
         self.model = None
+        self._cache: Dict[str, Tuple[dict, np.ndarray]] = {}
         self._initialize_model()
     
     def _initialize_model(self):
-        """
-        Initialize InsightFace model.
-        Downloads model on first run (~300MB).
-        """
+        """Initialize InsightFace model."""
         if not INSIGHTFACE_AVAILABLE:
-            print("[FaceRec] InsightFace not available, using mock mode")
+            print("[FaceRec] InsightFace not available")
             return
         
         try:
-            # Use buffalo_l model - good balance of speed and accuracy
-            # det_size controls detection resolution
             self.model = FaceAnalysis(
                 name="buffalo_l",
-                providers=["CPUExecutionProvider"]  # Use CPU for compatibility
+                providers=["CPUExecutionProvider"]
             )
-            self.model.prepare(ctx_id=0, det_size=(640, 640))
-            print("[FaceRec] InsightFace model initialized")
+            self.model.prepare(ctx_id=0, det_size=(320, 320))
+            print("[FaceRec] Model initialized")
         except Exception as e:
-            print(f"[FaceRec] Failed to initialize model: {e}")
+            print(f"[FaceRec] Init failed: {e}")
             self.model = None
     
-    def decode_image(self, image_base64: str) -> Optional[np.ndarray]:
-        """
-        Decode base64 image to OpenCV format (BGR).
-        Handles both with and without data URL prefix.
-        """
+    def load_cache_from_firestore(self):
+        """Load embeddings from Firestore into session cache."""
         try:
-            # Remove data URL prefix if present
+            from firebase_sync import get_all_people_from_firebase, is_initialized
+            
+            if not is_initialized():
+                print("[FaceRec] Firebase not initialized, loading from SQLite")
+                self.load_cache_from_database()
+                return
+            
+            people = get_all_people_from_firebase()
+            self._cache.clear()
+            
+            for person_data in people:
+                person_id = person_data.get("id")
+                embedding = person_data.get("embedding_array")
+                
+                if person_id and embedding is not None:
+                    # Create person dict without embedding array
+                    person = {
+                        "id": person_id,
+                        "name": person_data.get("name", ""),
+                        "relation": person_data.get("relation", ""),
+                        "context": person_data.get("context", ""),
+                        "last_met": person_data.get("last_met", ""),
+                    }
+                    self._cache[person_id] = (person, embedding)
+            
+            print(f"[FaceRec] Loaded {len(self._cache)} faces from Firestore")
+            
+        except Exception as e:
+            print(f"[FaceRec] Firestore load error: {e}")
+            self.load_cache_from_database()
+    
+    def load_cache_from_database(self):
+        """Fallback: load from SQLite."""
+        try:
+            from database import get_all_people_with_embeddings
+            
+            known_people = get_all_people_with_embeddings()
+            self._cache.clear()
+            
+            for person, embedding in known_people:
+                if embedding is not None:
+                    self._cache[person['id']] = (person, embedding)
+            
+            print(f"[FaceRec] Loaded {len(self._cache)} faces from SQLite")
+        except Exception as e:
+            print(f"[FaceRec] SQLite load error: {e}")
+    
+    def clear_cache(self):
+        """Clear session cache."""
+        count = len(self._cache)
+        self._cache.clear()
+        print(f"[FaceRec] Cache cleared ({count} entries)")
+    
+    def add_to_cache(self, person_id: str, person_data: dict, embedding: np.ndarray):
+        """Add newly registered face to cache."""
+        self._cache[person_id] = (person_data, embedding)
+        print(f"[FaceRec] Added to cache: {person_data.get('name')} (total: {len(self._cache)})")
+    
+    def remove_from_cache(self, person_id: str):
+        """Remove from cache."""
+        if person_id in self._cache:
+            del self._cache[person_id]
+    
+    def get_cache_count(self) -> int:
+        return len(self._cache)
+    
+    def decode_image(self, image_base64: str) -> Optional[np.ndarray]:
+        """Decode base64 to OpenCV image."""
+        try:
             if "," in image_base64:
                 image_base64 = image_base64.split(",")[1]
             
-            # Decode base64 to bytes
             image_bytes = base64.b64decode(image_base64)
-            
-            # Convert to PIL Image
             pil_image = Image.open(BytesIO(image_bytes))
-            
-            # Convert to OpenCV format (BGR)
-            cv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-            
-            return cv_image
+            return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
         except Exception as e:
-            print(f"[FaceRec] Image decode error: {e}")
+            print(f"[FaceRec] Decode error: {e}")
             return None
     
     def get_embedding(self, image: np.ndarray) -> Optional[np.ndarray]:
-        """
-        Generate face embedding from an image.
-        Returns 512-dimensional embedding vector or None if no face found.
-        """
+        """Generate face embedding."""
         if self.model is None:
-            # Mock mode: return random embedding for testing
             return np.random.randn(512).astype(np.float32)
         
         try:
-            # Run face analysis
             faces = self.model.get(image)
-            
             if len(faces) == 0:
-                print("[FaceRec] No face detected in crop")
                 return None
-            
-            # Return embedding of first (largest) face
-            # normed_embedding is L2-normalized for cosine similarity
             return faces[0].normed_embedding
-            
         except Exception as e:
             print(f"[FaceRec] Embedding error: {e}")
             return None
     
     def get_embedding_from_base64(self, image_base64: str) -> Optional[np.ndarray]:
-        """
-        Generate embedding directly from base64 image.
-        Convenience method combining decode + embedding.
-        """
+        """Generate embedding from base64 image."""
         image = self.decode_image(image_base64)
         if image is None:
             return None
         return self.get_embedding(image)
     
     def compute_similarity(self, emb1: np.ndarray, emb2: np.ndarray) -> float:
-        """
-        Compute cosine similarity between two embeddings.
-        Returns value between -1 (opposite) and 1 (identical).
-        For normalized embeddings, this is just the dot product.
-        """
-        # Ensure normalized
+        """Cosine similarity between embeddings."""
         emb1_norm = emb1 / (np.linalg.norm(emb1) + 1e-8)
         emb2_norm = emb2 / (np.linalg.norm(emb2) + 1e-8)
-        
-        # Cosine similarity via dot product
         return float(np.dot(emb1_norm, emb2_norm))
     
-    def find_match(
-        self, 
-        query_embedding: np.ndarray
-    ) -> Tuple[Optional[dict], float]:
-        """
-        Find the best matching person for a query embedding.
-        
-        Returns:
-            (person_dict, similarity_score) if match found
-            (None, best_score) if no match above threshold
-        """
-        # Get all known people with embeddings
-        known_people = get_all_people_with_embeddings()
-        
-        if not known_people:
+    def find_match(self, query_embedding: np.ndarray) -> Tuple[Optional[dict], float]:
+        """Find best match from cache."""
+        if not self._cache:
             return None, 0.0
         
         best_match = None
         best_score = -1.0
         
-        for person, embedding in known_people:
-            if embedding is None:
-                continue
-            
+        for person_id, (person, embedding) in self._cache.items():
             score = self.compute_similarity(query_embedding, embedding)
-            
             if score > best_score:
                 best_score = score
                 if score >= self.SIMILARITY_THRESHOLD:
@@ -164,35 +179,20 @@ class FaceRecognizer:
         
         return best_match, best_score
     
-    def recognize(
-        self, 
-        image_base64: str
-    ) -> Tuple[Optional[dict], float, Optional[np.ndarray]]:
-        """
-        Full recognition pipeline: decode -> embed -> match.
-        
-        Returns:
-            (matched_person, confidence, embedding)
-            matched_person is None if no match found
-        """
-        # Generate embedding
+    def recognize(self, image_base64: str) -> Tuple[Optional[dict], float, Optional[np.ndarray]]:
+        """Full recognition pipeline."""
         embedding = self.get_embedding_from_base64(image_base64)
-        
         if embedding is None:
             return None, 0.0, None
         
-        # Find match
         person, score = self.find_match(embedding)
-        
         return person, score, embedding
 
 
-# Singleton instance
+# Singleton
 _recognizer: Optional[FaceRecognizer] = None
 
-
 def get_recognizer() -> FaceRecognizer:
-    """Get the singleton FaceRecognizer instance."""
     global _recognizer
     if _recognizer is None:
         _recognizer = FaceRecognizer()

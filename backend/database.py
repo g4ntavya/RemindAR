@@ -220,5 +220,55 @@ def seed_demo_data():
     print(f"[DB] Seeded {len(demo_people)} demo identities")
 
 
+def clear_all_people():
+    """Clear all people from the database."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM people")
+    conn.commit()
+    print("[DB] Cleared all people from database")
+
+
+def sync_from_firestore(firestore_people: list):
+    """
+    Sync people from Firestore to SQLite.
+    Clears existing data and replaces with Firestore data.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Clear existing data
+    cursor.execute("DELETE FROM people")
+    
+    synced = 0
+    for person in firestore_people:
+        person_id = person.get("id")
+        if not person_id:
+            continue
+            
+        # Get embedding if available
+        embedding_json = None
+        if "embedding" in person and person["embedding"]:
+            embedding_json = json.dumps(person["embedding"])
+        
+        cursor.execute("""
+            INSERT OR REPLACE INTO people (id, name, relation, last_met, context, embedding)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            person_id,
+            person.get("name", ""),
+            person.get("relation", ""),
+            person.get("last_met", ""),
+            person.get("context", ""),
+            embedding_json
+        ))
+        synced += 1
+    
+    conn.commit()
+    print(f"[DB] Synced {synced} people from Firestore to SQLite")
+    return synced
+
+
 # Initialize on import
 init_database()
+

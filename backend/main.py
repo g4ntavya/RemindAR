@@ -34,6 +34,14 @@ from database import (
     delete_person
 )
 from face_recognition import get_recognizer
+from firebase_sync import (
+    init_firebase,
+    sync_person_to_firebase,
+    sync_embedding_to_firebase,
+    delete_person_from_firebase,
+    add_update_listener,
+    notify_update
+)
 
 
 # ============================================================================
@@ -44,29 +52,50 @@ from face_recognition import get_recognizer
 async def lifespan(app: FastAPI):
     """
     Application startup and shutdown handler.
-    Initializes database and face recognition model.
+    Flow: Firestore → SQLite → In-Memory Cache
     """
     print("[Server] Starting RemindAR backend...")
     
-    # Initialize database (already done on import, but explicit is good)
+    # Initialize database
     init_database()
     
-    # Seed demo data if needed
-    people = get_all_people()
-    if len(people) == 0:
-        print("[Server] No people found, seeding demo data...")
-        seed_demo_data()
-    else:
-        print(f"[Server] Found {len(people)} people in database")
+    # Initialize Firebase
+    print("[Server] Initializing Firebase...")
+    firebase_ok = init_firebase()
+    if firebase_ok:
+        add_update_listener(broadcast_update)
+        
+        # Sync Firestore → SQLite
+        print("[Server] Syncing Firestore → SQLite...")
+        from firebase_sync import get_all_people_from_firebase
+        from database import sync_from_firestore
+        
+        firestore_people = get_all_people_from_firebase()
+        if firestore_people:
+            sync_from_firestore(firestore_people)
+        else:
+            print("[Server] No data in Firestore, checking SQLite...")
     
-    # Pre-initialize face recognizer (triggers model download if needed)
+    # Check if we have data
+    people = get_all_people()
+    print(f"[Server] SQLite has {len(people)} people")
+    
+    # Initialize face recognizer
     print("[Server] Initializing face recognition model...")
     recognizer = get_recognizer()
+    
+    # Load cache from SQLite (fastest)
+    print("[Server] Loading cache from SQLite...")
+    recognizer.load_cache_from_database()
+    
     print("[Server] Backend ready!")
     
     yield
     
+    # Cleanup
     print("[Server] Shutting down...")
+    recognizer.clear_cache()
+
 
 
 # ============================================================================
@@ -120,6 +149,37 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+# Broadcast function for Firebase sync updates
+def broadcast_update(event_type: str, data: dict):
+    """Broadcast an update to all connected WebSocket clients."""
+    message = {
+        "type": "sync_update",
+        "event": event_type,
+        "data": data
+    }
+    
+    # Run async broadcast in event loop
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(broadcast_to_all(message))
+        else:
+            loop.run_until_complete(broadcast_to_all(message))
+    except RuntimeError:
+        # No event loop, skip broadcast
+        pass
+
+
+async def broadcast_to_all(message: dict):
+    """Send message to all connected clients."""
+    for ws in list(manager.active_connections):
+        try:
+            await ws.send_json(message)
+        except Exception as e:
+            print(f"[WS] Broadcast error: {e}")
+            manager.active_connections.discard(ws)
 
 
 # ============================================================================
@@ -243,7 +303,60 @@ async def health():
     return {
         "status": "healthy",
         "model_loaded": recognizer.model is not None,
-        "people_count": len(get_all_people())
+        "people_count": len(get_all_people()),
+        "cache_count": recognizer.get_cache_count()
+    }
+
+
+@app.post("/refresh-cache")
+async def refresh_cache():
+    """Clear and reload the face embedding cache."""
+    recognizer = get_recognizer()
+    recognizer.load_cache_from_database()
+    return {
+        "status": "refreshed",
+        "cache_count": recognizer.get_cache_count()
+    }
+
+
+@app.post("/transcribe")
+async def transcribe_audio(audio_data: bytes = None):
+    """
+    Transcribe audio to text using local Whisper.
+    Accepts raw audio bytes (WAV format).
+    """
+    from speech_to_text import get_stt
+    from fastapi import Request
+    
+    # This endpoint needs to be handled differently for raw bytes
+    # We'll use a separate approach with UploadFile
+    pass
+
+
+from fastapi import File, UploadFile
+
+@app.post("/api/transcribe")
+async def api_transcribe(audio: UploadFile = File(...)):
+    """
+    Transcribe uploaded audio file to text.
+    Accepts WAV, MP3, or WebM audio.
+    """
+    from speech_to_text import get_stt
+    
+    stt = get_stt()
+    
+    if stt.model is None:
+        return {"error": "STT model not loaded", "text": ""}
+    
+    # Read audio data
+    audio_bytes = await audio.read()
+    
+    # Transcribe
+    text = stt.transcribe(audio_bytes)
+    
+    return {
+        "text": text or "",
+        "success": text is not None
     }
 
 
@@ -282,14 +395,21 @@ async def create_person(person: PersonCreate):
     if not success:
         raise HTTPException(status_code=400, detail="Failed to create person")
     
-    return get_person(person_id)
+    # Get the created person
+    created_person = get_person(person_id)
+    
+    # Sync to Firebase and broadcast to all clients
+    sync_person_to_firebase(created_person)
+    
+    print(f"[API] Created person: {person.name} ({person_id})")
+    return created_person
 
 
 @app.post("/register-face/{person_id}")
 async def register_face(person_id: str, face_data: FaceData):
     """
     Register a face embedding for an existing person.
-    Used to add face recognition capability for a person.
+    Stores in both SQLite and Firestore for persistence.
     """
     person = get_person(person_id)
     if not person:
@@ -301,12 +421,26 @@ async def register_face(person_id: str, face_data: FaceData):
     if embedding is None:
         raise HTTPException(status_code=400, detail="Could not extract face embedding")
     
+    # Save to SQLite
     success = update_embedding(person_id, embedding)
-    
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update embedding")
     
-    return {"status": "success", "person_id": person_id}
+    # Add to local cache immediately
+    updated_person = get_person(person_id)
+    recognizer.add_to_cache(person_id, updated_person, embedding)
+    
+    # Store embedding in Firestore for persistence
+    sync_embedding_to_firebase(person_id, embedding)
+    
+    # Broadcast for real-time update
+    await broadcast_to_all({
+        "type": "person_registered",
+        "data": updated_person
+    })
+    
+    print(f"[API] Registered face for: {person.get('name')} ({person_id})")
+    return {"status": "success", "person_id": person_id, "person": updated_person}
 
 
 @app.delete("/people/{person_id}")
@@ -315,6 +449,14 @@ async def remove_person(person_id: str):
     success = delete_person(person_id)
     if not success:
         raise HTTPException(status_code=404, detail="Person not found")
+    
+    # Remove from local cache
+    recognizer = get_recognizer()
+    recognizer.remove_from_cache(person_id)
+    
+    # Sync deletion to Firebase
+    delete_person_from_firebase(person_id)
+    
     return {"status": "deleted", "person_id": person_id}
 
 

@@ -1,14 +1,15 @@
 /**
- * Face detection hook - Simplified version
- * Uses browser's native FaceDetector API (Chrome/Edge) or provides mock data
+ * Face detection hook - Cross-browser compatible
+ * 
+ * Strategy:
+ * 1. Try native Shape Detection API (Chrome/Edge experimental)
+ * 2. Fall back to MediaPipe (Chrome, most browsers)
+ * 3. For Safari: Provide visual feedback that face detection is limited
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { BoundingBox, TrackedFace } from '../types';
-import {
-    lerpBoundingBox,
-    matchFaces
-} from '../utils/faceUtils';
+import { lerpBoundingBox, matchFaces } from '../utils/faceUtils';
 
 // Smoothing factor for bounding box interpolation
 const LERP_FACTOR = 0.3;
@@ -25,9 +26,9 @@ interface UseFaceDetectionReturn {
     error: string | null;
 }
 
-// Check if native FaceDetector API is available (Chrome 70+ with flag, Edge)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const hasNativeFaceDetector = typeof (window as any).FaceDetector !== 'undefined';
+// Detect browser
+const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+const isChrome = /chrome/i.test(navigator.userAgent) && !/edge/i.test(navigator.userAgent);
 
 export function useFaceDetection(
     videoRef: React.RefObject<HTMLVideoElement | null>
@@ -38,11 +39,11 @@ export function useFaceDetection(
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const detectorRef = useRef<any>(null);
+    const detectorTypeRef = useRef<'native' | 'mediapipe' | 'none'>('none');
     const animationFrameRef = useRef<number>();
     const lastDetectionRef = useRef<number>(0);
     const facesRef = useRef<Map<string, TrackedFace>>(new Map());
     const isProcessingRef = useRef(false);
-    const mediaPipeLoadedRef = useRef(false);
 
     // Keep ref in sync with state
     useEffect(() => {
@@ -96,13 +97,25 @@ export function useFaceDetection(
         let mounted = true;
 
         const init = async () => {
-            // Try native FaceDetector first
-            if (hasNativeFaceDetector) {
+            // For Safari, we'll set a special mode
+            if (isSafari) {
+                console.log('[FaceDetection] Safari detected, trying MediaPipe...');
+            }
+
+            // Try native FaceDetector first (Chrome Origin Trial)
+            // @ts-expect-error - FaceDetector not in standard TS types
+            if (typeof window.FaceDetector !== 'undefined' && isChrome) {
                 try {
                     console.log('[FaceDetection] Trying native FaceDetector...');
-                    // @ts-expect-error - FaceDetector not in TS types
-                    detectorRef.current = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 5 });
+                    // @ts-expect-error - FaceDetector not in standard TS types
+                    const detector = new window.FaceDetector({
+                        fastMode: true,
+                        maxDetectedFaces: 5
+                    });
+
                     if (mounted) {
+                        detectorRef.current = detector;
+                        detectorTypeRef.current = 'native';
                         setIsModelLoaded(true);
                         console.log('[FaceDetection] Native FaceDetector ready!');
                     }
@@ -112,24 +125,32 @@ export function useFaceDetection(
                 }
             }
 
-            // Try loading MediaPipe from CDN
+            // Try MediaPipe
             try {
-                console.log('[FaceDetection] Loading MediaPipe...');
+                console.log('[FaceDetection] Loading MediaPipe from CDN...');
                 await loadMediaPipe();
 
                 if (!mounted) return;
 
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const FaceDetection = (window as any).FaceDetection;
-                if (!FaceDetection) throw new Error('MediaPipe not loaded');
+                if (!FaceDetection) throw new Error('MediaPipe failed to initialize');
 
                 const detector = new FaceDetection({
-                    locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4/${file}`,
+                    locateFile: (file: string) =>
+                        `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4/${file}`,
                 });
 
-                detector.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
+                detector.setOptions({
+                    model: 'short',
+                    minDetectionConfidence: 0.5
+                });
 
-                detector.onResults((results: { detections?: Array<{ boundingBox: { xCenter: number; yCenter: number; width: number; height: number } }> }) => {
+                detector.onResults((results: {
+                    detections?: Array<{
+                        boundingBox: { xCenter: number; yCenter: number; width: number; height: number }
+                    }>
+                }) => {
                     const now = Date.now();
                     const detections: BoundingBox[] = (results.detections || []).map(det => ({
                         x: det.boundingBox.xCenter - det.boundingBox.width / 2,
@@ -140,18 +161,24 @@ export function useFaceDetection(
                     updateFaces(detections, now);
                 });
 
-                detectorRef.current = detector;
-                mediaPipeLoadedRef.current = true;
                 if (mounted) {
+                    detectorRef.current = detector;
+                    detectorTypeRef.current = 'mediapipe';
                     setIsModelLoaded(true);
                     console.log('[FaceDetection] MediaPipe ready!');
                 }
             } catch (e) {
                 console.error('[FaceDetection] MediaPipe failed:', e);
-                // Don't block - allow app to work without face detection
+
                 if (mounted) {
-                    setError('Face detection unavailable. Try Chrome or refresh.');
-                    setIsModelLoaded(true); // Still allow app to function
+                    // Allow app to work without face detection
+                    if (isSafari) {
+                        setError('Face detection limited on Safari. Try Chrome for best experience.');
+                    } else {
+                        setError('Face detection unavailable. Refresh to retry.');
+                    }
+                    detectorTypeRef.current = 'none';
+                    setIsModelLoaded(true); // Don't block UI
                 }
             }
         };
@@ -168,7 +195,9 @@ export function useFaceDetection(
     const detect = useCallback(async () => {
         const video = videoRef.current;
         const detector = detectorRef.current;
+        const detectorType = detectorTypeRef.current;
 
+        // Skip if no video or detector
         if (!video || video.readyState < 2 || !video.videoWidth) {
             animationFrameRef.current = requestAnimationFrame(detect);
             return;
@@ -176,35 +205,40 @@ export function useFaceDetection(
 
         const now = Date.now();
 
-        if (now - lastDetectionRef.current >= DETECTION_INTERVAL && !isProcessingRef.current && detector) {
-            isProcessingRef.current = true;
-            lastDetectionRef.current = now;
+        // Throttle and prevent stacking
+        if (now - lastDetectionRef.current >= DETECTION_INTERVAL && !isProcessingRef.current) {
+            if (detector && detectorType !== 'none') {
+                isProcessingRef.current = true;
+                lastDetectionRef.current = now;
 
-            try {
-                if (mediaPipeLoadedRef.current) {
-                    // MediaPipe async
-                    await detector.send({ image: video });
-                } else {
-                    // Native FaceDetector
-                    const detected = await detector.detect(video);
-                    const detections: BoundingBox[] = detected.map((face: { boundingBox: DOMRectReadOnly }) => ({
-                        x: face.boundingBox.x / video.videoWidth,
-                        y: face.boundingBox.y / video.videoHeight,
-                        width: face.boundingBox.width / video.videoWidth,
-                        height: face.boundingBox.height / video.videoHeight,
-                    }));
-                    updateFaces(detections, now);
+                try {
+                    if (detectorType === 'native') {
+                        // Native FaceDetector API
+                        const detected = await detector.detect(video);
+                        const detections: BoundingBox[] = detected.map(
+                            (face: { boundingBox: DOMRectReadOnly }) => ({
+                                x: face.boundingBox.x / video.videoWidth,
+                                y: face.boundingBox.y / video.videoHeight,
+                                width: face.boundingBox.width / video.videoWidth,
+                                height: face.boundingBox.height / video.videoHeight,
+                            })
+                        );
+                        updateFaces(detections, now);
+                    } else if (detectorType === 'mediapipe') {
+                        // MediaPipe - results come via callback
+                        await detector.send({ image: video });
+                    }
+                } catch (e) {
+                    console.error('[FaceDetection] Detection error:', e);
+                    isProcessingRef.current = false;
                 }
-            } catch (e) {
-                console.error('[FaceDetection] Error:', e);
-                isProcessingRef.current = false;
             }
         }
 
         animationFrameRef.current = requestAnimationFrame(detect);
     }, [videoRef, updateFaces]);
 
-    // Start loop when ready
+    // Start detection loop
     useEffect(() => {
         if (isModelLoaded) {
             console.log('[FaceDetection] Starting detection loop');
@@ -218,20 +252,40 @@ export function useFaceDetection(
     return { faces, isModelLoaded, error };
 }
 
-// Load MediaPipe script
+// Load MediaPipe script from CDN
 function loadMediaPipe(): Promise<void> {
     return new Promise((resolve, reject) => {
+        // Already loaded?
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         if ((window as any).FaceDetection) {
             resolve();
             return;
         }
 
+        // Already loading?
+        const existing = document.getElementById('mediapipe-script');
+        if (existing) {
+            existing.addEventListener('load', () => resolve());
+            existing.addEventListener('error', () => reject(new Error('Script load failed')));
+            return;
+        }
+
         const script = document.createElement('script');
+        script.id = 'mediapipe-script';
         script.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4/face_detection.js';
         script.crossOrigin = 'anonymous';
-        script.onload = () => setTimeout(resolve, 200); // Give it time to initialize
-        script.onerror = () => reject(new Error('Failed to load MediaPipe'));
+
+        script.onload = () => {
+            console.log('[FaceDetection] MediaPipe script loaded');
+            // Wait for initialization
+            setTimeout(resolve, 300);
+        };
+
+        script.onerror = () => {
+            console.error('[FaceDetection] MediaPipe script failed to load');
+            reject(new Error('Failed to load MediaPipe'));
+        };
+
         document.head.appendChild(script);
     });
 }

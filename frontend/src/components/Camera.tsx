@@ -1,6 +1,6 @@
 /**
  * Camera component for webcam capture
- * Handles getUserMedia and video element management
+ * Handles getUserMedia with Safari compatibility
  */
 
 import { useEffect, useRef, useState, forwardRef } from 'react';
@@ -17,15 +17,30 @@ export const Camera = forwardRef<HTMLVideoElement, CameraProps>(
         const videoRef = (ref as React.RefObject<HTMLVideoElement>) || localRef;
 
         useEffect(() => {
+            let stream: MediaStream | null = null;
+
             const initCamera = async () => {
                 try {
-                    // Request camera access with optimal settings for face detection
-                    const stream = await navigator.mediaDevices.getUserMedia({
+                    // Check for getUserMedia support (with Safari fallback)
+                    const getUserMedia =
+                        navigator.mediaDevices?.getUserMedia ||
+                        // @ts-expect-error - Safari legacy
+                        navigator.webkitGetUserMedia ||
+                        // @ts-expect-error - Firefox legacy
+                        navigator.mozGetUserMedia;
+
+                    if (!getUserMedia) {
+                        throw new Error('Camera not supported in this browser');
+                    }
+
+                    // Request camera access with Safari-compatible constraints
+                    stream = await navigator.mediaDevices.getUserMedia({
                         video: {
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 },
-                            facingMode: 'user', // Front camera
-                            frameRate: { ideal: 30 },
+                            width: { ideal: 1280, max: 1920 },
+                            height: { ideal: 720, max: 1080 },
+                            facingMode: 'user',
+                            // Safari-friendly frame rate
+                            frameRate: { ideal: 30, max: 30 },
                         },
                         audio: false,
                     });
@@ -35,18 +50,50 @@ export const Camera = forwardRef<HTMLVideoElement, CameraProps>(
 
                         // Wait for video to be ready
                         videoRef.current.onloadedmetadata = () => {
-                            videoRef.current?.play().then(() => {
-                                setIsLoading(false);
-                                onReady?.();
-                                console.log('[Camera] Video stream ready');
-                            });
+                            if (videoRef.current) {
+                                // Safari needs explicit play call
+                                const playPromise = videoRef.current.play();
+
+                                if (playPromise !== undefined) {
+                                    playPromise
+                                        .then(() => {
+                                            setIsLoading(false);
+                                            onReady?.();
+                                            console.log('[Camera] Video stream ready');
+                                        })
+                                        .catch((err) => {
+                                            console.error('[Camera] Play failed:', err);
+                                            // Try again with muted (autoplay policy)
+                                            if (videoRef.current) {
+                                                videoRef.current.muted = true;
+                                                videoRef.current.play().then(() => {
+                                                    setIsLoading(false);
+                                                    onReady?.();
+                                                });
+                                            }
+                                        });
+                                }
+                            }
                         };
                     }
                 } catch (err) {
                     console.error('[Camera] Error accessing camera:', err);
-                    const errorMessage = err instanceof Error
-                        ? err.message
-                        : 'Failed to access camera';
+                    let errorMessage = 'Failed to access camera';
+
+                    if (err instanceof Error) {
+                        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                            errorMessage = 'Camera permission denied. Please allow camera access.';
+                        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                            errorMessage = 'No camera found. Please connect a camera.';
+                        } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+                            errorMessage = 'Camera is in use by another application.';
+                        } else if (err.name === 'OverconstrainedError') {
+                            errorMessage = 'Camera does not meet requirements.';
+                        } else {
+                            errorMessage = err.message;
+                        }
+                    }
+
                     onError?.(errorMessage);
                 }
             };
@@ -55,8 +102,7 @@ export const Camera = forwardRef<HTMLVideoElement, CameraProps>(
 
             // Cleanup: stop tracks on unmount
             return () => {
-                if (videoRef.current?.srcObject) {
-                    const stream = videoRef.current.srcObject as MediaStream;
+                if (stream) {
                     stream.getTracks().forEach(track => track.stop());
                 }
             };
@@ -70,6 +116,9 @@ export const Camera = forwardRef<HTMLVideoElement, CameraProps>(
                     autoPlay
                     playsInline
                     muted
+                    // Safari-specific attributes
+
+                    webkit-playsinline="true"
                     style={{ opacity: isLoading ? 0 : 1 }}
                 />
                 {isLoading && (

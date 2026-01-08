@@ -59,7 +59,7 @@ export function bboxDistance(a: BoundingBox, b: BoundingBox): number {
 export function cropFaceFromVideo(
     video: HTMLVideoElement,
     bbox: BoundingBox,
-    padding: number = 0.2
+    padding: number = 0.3
 ): string | null {
     if (!video.videoWidth || !video.videoHeight) {
         return null;
@@ -91,25 +91,21 @@ export function cropFaceFromVideo(
     width = Math.min(width, videoWidth - x);
     height = Math.min(height, videoHeight - y);
 
-    // Set canvas size (max 256px for efficiency)
-    const maxSize = 256;
+    // Set canvas size - use 512px for better face recognition
+    const maxSize = 512;
     const scale = Math.min(maxSize / width, maxSize / height, 1);
-    canvas.width = width * scale;
-    canvas.height = height * scale;
+    canvas.width = Math.round(width * scale);
+    canvas.height = Math.round(height * scale);
 
-    // Mirror the crop to match the mirrored video display
-    ctx.scale(-1, 1);
-    ctx.translate(-canvas.width, 0);
-
-    // Draw cropped region
+    // Draw cropped region - NO mirroring for InsightFace
     ctx.drawImage(
         video,
         x, y, width, height,
         0, 0, canvas.width, canvas.height
     );
 
-    // Convert to base64 JPEG
-    return canvas.toDataURL('image/jpeg', 0.8);
+    // Convert to base64 JPEG with good quality
+    return canvas.toDataURL('image/jpeg', 0.9);
 }
 
 /**
