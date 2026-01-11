@@ -370,43 +370,59 @@ body,
   transform: rotate(90deg);
 }
 
-/* Modify container with smooth animation */
-.modify-container {
+/* Action buttons container */
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
   max-height: 0;
   overflow: hidden;
   opacity: 0;
-  transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.3s ease,
-    margin 0.3s ease;
+  transition: max-height 0.3s ease,
+    opacity 0.25s ease,
+    margin 0.25s ease;
   margin-top: 0;
 }
 
-.modify-container.show {
-  max-height: 50px;
+.action-buttons.show {
+  max-height: 60px;
   opacity: 1;
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
-/* Modify button */
-.modify-btn {
-  display: block;
-  width: 100%;
-  padding: 10px 16px;
-  font-family: 'Inter', sans-serif;
-  font-size: 11px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.6);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+/* Circular icon buttons */
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
-.modify-btn:hover {
+/* Edit button - subtle gray */
+.edit-btn {
   background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.edit-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
   color: #fff;
-  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Delete button - red */
+.delete-btn {
+  background: rgba(220, 53, 69, 0.15);
+  color: rgba(220, 53, 69, 0.9);
+}
+
+.delete-btn:hover {
+  background: rgba(220, 53, 69, 0.3);
+  color: #dc3545;
 }
 
 /* Add Person Button */

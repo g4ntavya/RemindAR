@@ -521,6 +521,13 @@ async def remove_person(person_id: str):
     # Sync deletion to Firebase
     delete_person_from_firebase(person_id)
     
+    # Broadcast deletion to all clients
+    await broadcast_to_all({
+        "type": "person_deleted",
+        "data": {"id": person_id}
+    })
+    
+    print(f"[API] Deleted person: {person_id}")
     return {"status": "deleted", "person_id": person_id}
 
 

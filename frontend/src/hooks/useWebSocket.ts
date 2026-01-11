@@ -93,7 +93,11 @@ export function useWebSocket(): UseWebSocketReturn {
 
                     if (message.type === 'person_updated' && message.data) {
                         console.log('[WS] Person updated:', message.data.name);
-                        // Clear results so next recognition fetch returns new data
+                        setResults(new Map());
+                    }
+
+                    if (message.type === 'person_deleted' && message.data) {
+                        console.log('[WS] Person deleted:', message.data.id);
                         setResults(new Map());
                     }
                 } catch (e) {

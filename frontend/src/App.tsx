@@ -194,6 +194,33 @@ function App() {
         }
     }, [results]);
 
+    // Delete person
+    const handleDeletePerson = useCallback(async (personId: string) => {
+        if (!confirm('Delete this person? This cannot be undone.')) return;
+
+        console.log('[App] Deleting person:', personId);
+
+        try {
+            const res = await fetch(`http://localhost:8000/people/${personId}`, {
+                method: 'DELETE',
+            });
+
+            if (!res.ok) throw new Error('Delete failed');
+
+            // Clear all results to trigger fresh recognition
+            clearAllResults();
+
+            // Force re-recognition burst
+            setTimeout(sendAllFacesNow, 100);
+            setTimeout(sendAllFacesNow, 300);
+
+            console.log('[App] Deleted successfully');
+        } catch (error) {
+            console.error('[App] Delete error:', error);
+            alert('Failed to delete. See console.');
+        }
+    }, [clearAllResults, sendAllFacesNow]);
+
     // Handle modal submit
     const handleModalSubmit = useCallback(async (data: RegistrationData) => {
         const isEditing = !!editingPerson;
@@ -305,6 +332,7 @@ function App() {
                     containerHeight={dimensions.height}
                     onAddPerson={handleAddPerson}
                     onModifyPerson={handleModifyPerson}
+                    onDeletePerson={handleDeletePerson}
                 />
             )}
 
